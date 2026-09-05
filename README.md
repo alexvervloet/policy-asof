@@ -50,19 +50,43 @@ The deliverable is `RESULTS.md`, not the application:
 
 ## Status
 
-Phase 0, plumbing. The schema and the clock exist and the setup check is green.
-Nothing answers a question yet.
+Phase 1. The store answers point-in-time questions from the command line. There
+is no retrieval and no model yet: you name the section, and the two clocks
+decide which version you get.
 
 ## Running it
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt -e .
 docker compose up -d
-for f in migrations/*.sql; do docker compose exec -T db psql -q -U policy -d policy_asof -v ON_ERROR_STOP=1 < "$f"; done
-.venv/bin/python check_setup.py
+.venv/bin/python -m policy_asof.migrate
+.venv/bin/python -m policy_asof.cli ingest
 ```
 
 Postgres listens on 5438 so it cannot collide with a sibling project's database.
+
+Then ask the same question twice, moving only the clock that says what the
+system is allowed to know:
+
+```console
+$ policy-asof show --section 5.1 --valid-at 2026-02-01 --known-at 2026-03-01
+  outcome       in-force
+  version       v1, valid [2025-01-01 .. open)
+  Reimbursable expenses are capped at 75 EUR per day ...
+
+$ policy-asof show --section 5.1 --valid-at 2026-02-01
+  outcome       in-force
+  version       v3, valid [2026-01-01 .. open)
+  Reimbursable expenses are capped at 90 EUR per day ...
+```
+
+Both answers are correct. The cap was 75 EUR as far as anyone knew in March, and
+an amendment recorded on 1 May moved it to 90 EUR with effect from 1 January. A
+system with one clock has to pick one of those and cannot tell you which.
+
+`policy-asof history --section 5.2` prints every version of a clause on both
+clocks, including the rows the system has stopped believing, which are the only
+evidence of what it used to say.
 
 ## Licence
 

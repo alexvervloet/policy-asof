@@ -18,6 +18,9 @@ dependencies = { file = ["requirements.txt"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The repo root, so tests can import the scripts they cover. A checker nothing
+# tests is a checker nobody has a reason to believe.
+pythonpath = ["."]
 markers = [
     "eval: merge-gating evals",
     "layer: asserts one named mechanism is present, not that the outcome is right",

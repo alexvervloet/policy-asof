@@ -1,0 +1,151 @@
+# Date-parameterised gold set.
+#
+# One question yields several cases, because the answer depends on when you ask
+# about and when you ask. `known_at` is what the system is allowed to know;
+# `valid_at` is the day the rule had to be in force.
+#
+# `corpus_rev` is the revision these expectations were authored against. When it
+# moves and a case fails, the case is stale rather than the code regressed, and
+# the harness says which. Nothing here reads the wall clock: NOW is a fixed
+# instant, so these assertions mean the same thing next April.
+corpus_rev: 14d5ce14652d
+now: 2026-06-01T00:00:00Z
+
+cases:
+  # --- current: what is the rule today -------------------------------------
+  - id: parental-leave-today
+    question: How much paid parental leave am I entitled to?
+    section: "4.2"
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: current
+    must_contain: ["16 weeks"]
+    must_not_contain: ["12 weeks"]
+
+  - id: expense-cap-today
+    question: What is the daily limit for meals when I travel for work?
+    section: "5.1"
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: current
+    must_contain: ["90 EUR"]
+    must_not_contain: ["75 EUR"]
+
+  - id: remote-stipend-today
+    question: How much do I get each month for working from home?
+    section: "5.2"
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: current
+    must_contain: ["55 EUR"]
+    must_not_contain: ["40 EUR"]
+
+  - id: annual-leave-today
+    question: How many days of annual leave do I accrue in a year?
+    section: "4.1"
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: current
+    must_contain: ["25 days"]
+    must_not_contain: []
+
+  # --- historical: the rule that applied then ------------------------------
+  - id: parental-leave-for-a-march-birth
+    question: My child was born in March 2026. How much parental leave applies?
+    section: "4.2"
+    valid_at: 2026-03-01
+    known_at: 2026-06-01T00:00:00Z
+    class: historical
+    must_contain: ["12 weeks"]
+    must_not_contain: ["16 weeks"]
+
+  - id: remote-stipend-august-2025
+    question: What was the home office stipend in August 2025?
+    section: "5.2"
+    valid_at: 2025-08-01
+    known_at: 2026-06-01T00:00:00Z
+    class: historical
+    must_contain: ["40 EUR"]
+    must_not_contain: ["55 EUR"]
+
+  - id: equipment-allowance-2025
+    question: How much can I claim towards a desk and chair?
+    section: "6.2"
+    valid_at: 2025-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: historical
+    must_contain: ["800 EUR"]
+    must_not_contain: []
+
+  # --- retroactive: the amendment that reached backwards --------------------
+  - id: expense-cap-february-as-known-in-march
+    question: What was the daily meal limit for a trip in February 2026?
+    section: "5.1"
+    valid_at: 2026-02-01
+    known_at: 2026-03-01T00:00:00Z
+    class: retroactive
+    must_contain: ["75 EUR"]
+    must_not_contain: ["90 EUR"]
+
+  - id: expense-cap-february-as-known-now
+    question: What was the daily meal limit for a trip in February 2026?
+    section: "5.1"
+    valid_at: 2026-02-01
+    known_at: 2026-06-01T00:00:00Z
+    class: retroactive
+    must_contain: ["90 EUR"]
+    must_not_contain: ["75 EUR"]
+
+  # --- correction: the account changed, the world did not -------------------
+  - id: remote-stipend-october-as-known-in-january
+    question: What was the home office stipend in October 2025?
+    section: "5.2"
+    valid_at: 2025-10-01
+    known_at: 2026-01-01T00:00:00Z
+    class: correction
+    must_contain: ["40 EUR"]
+    must_not_contain: ["55 EUR"]
+
+  - id: remote-stipend-october-as-known-now
+    question: What was the home office stipend in October 2025?
+    section: "5.2"
+    valid_at: 2025-10-01
+    known_at: 2026-06-01T00:00:00Z
+    class: correction
+    must_contain: ["55 EUR"]
+    must_not_contain: ["40 EUR"]
+
+  # --- gap: in force, then not, with nothing replacing it -------------------
+  - id: commuting-allowance-while-it-ran
+    question: Do I get anything towards my train ticket to the Antwerp office?
+    section: "6.1"
+    valid_at: 2025-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: gap
+    must_contain: ["60 EUR"]
+    must_not_contain: []
+
+  - id: commuting-allowance-after-it-expired
+    question: Do I get anything towards my train ticket to the Antwerp office?
+    section: "6.1"
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: gap
+    expect_outcome: no-rule-in-force
+
+  # --- out of coverage: nothing to answer from ------------------------------
+  - id: parental-leave-before-the-handbook
+    question: How much parental leave applied in 2024?
+    section: "4.2"
+    valid_at: 2024-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: out-of-coverage
+    expect_outcome: no-rule-in-force
+
+  - id: parental-leave-asked-before-anything-was-recorded
+    question: How much parental leave do I get?
+    section: "4.2"
+    valid_at: 2025-06-01
+    known_at: 2024-01-01T00:00:00Z
+    class: out-of-coverage
+    expect_outcome: no-record

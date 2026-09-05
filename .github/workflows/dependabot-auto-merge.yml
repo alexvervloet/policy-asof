@@ -80,7 +80,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.pr.outputs.number }}
           VERDICT: ${{ steps.pr.outputs.verdict }}
         run: |
-          gh pr comment "${{ steps.pr.outputs.number }}" --repo "$REPO" --body \
+          set -euo pipefail
+
+          # Dependabot rebases an open pull request every time main moves, and
+          # each rebase runs ci again, which lands here again. Say it once.
+          said=$(gh api "repos/$REPO/issues/$NUMBER/comments" \
+                   --jq '[.[] | select(.user.login == "github-actions[bot]")
+                              | select(.body | contains("left for manual review"))] | length')
+          if [ "$said" -gt 0 ]; then
+            echo "already left a review note on #$NUMBER"
+            exit 0
+          fi
+
+          gh pr comment "$NUMBER" --repo "$REPO" --body \
             "CI is green. Classified as \`$VERDICT\`, so this is left for manual review. Check for a moved import before merging: pgvector relocated \`Vector\` from \`pgvector.psycopg\` to the package root in 0.5.0, and psycopg narrowed \`execute\`'s query type in 3.3."

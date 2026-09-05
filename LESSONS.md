@@ -111,3 +111,52 @@ never affected: it runs under bash, and a here-string does not process escapes.
 **Next time.** Never pipe JSON through `echo` in a shell you did not choose. The
 failure is worse than an error, because a fail-closed classifier turns a mangled
 input into a legitimate-looking verdict.
+
+## 3. The type error I was suppressing was not being reported by anything
+
+**Expected.** The migration runner reads SQL from disk and hands it to
+`conn.execute`, and psycopg 3.3 types that parameter as `LiteralString` so a
+query cannot be assembled from a variable that might hold request data. A
+sibling project hit this and wrote down the fix: `cast(LiteralString, ...)` is
+rejected as a redundant cast because mypy erases `LiteralString` in a cast
+target, so the way out is a pyright-specific pragma.
+
+**What happened.** The cast was rejected exactly as predicted. Replacing it with
+`# type: ignore[arg-type]` produced:
+
+```
+policy_asof/migrate.py:36: error: Unused "type: ignore" comment  [unused-ignore]
+```
+
+Unused, because mypy does not enforce `LiteralString` at all. It erases it, so
+`str` where a `LiteralString` is wanted is not an error and never was. Plain
+`conn.execute(path.read_text())` type-checks clean under `strict = true`.
+
+Which means the guarantee psycopg went to the trouble of shipping was not being
+checked anywhere in this repository. CI ran ruff, mypy and pytest. The one
+checker that can see the difference between a query written in the source and a
+query assembled at runtime was not among them, and the project would have gone
+on believing it had that protection because the sibling's lesson said the
+pragma was the answer.
+
+**Fix.** pyright in CI, `typeCheckingMode = "strict"`, the same file list mypy
+gets. It then reports the line, the pragma becomes real, and the comment
+explaining it is true instead of decorative.
+
+Two things fell out of turning it on. The first run reported **54 errors on a
+clean tree**, every one of them cascading from `Import "psycopg" could not be
+resolved`, because pyright resolves imports against the system interpreter
+rather than the project's `.venv` unless `venvPath` and `venv` say otherwise. A
+checker that fails on a correct repository and cannot be made to pass gets
+deleted from CI within a week, so it was run against a clean tree and required
+to be silent before it went anywhere near the workflow. And with the config
+naming `.venv`, CI had to build one too, which is the better arrangement anyway:
+CI now installs and runs out of the same virtualenv the laptop uses instead of a
+global install that resolves differently.
+
+**Next time.** When a lesson from another project prescribes a fix, check that
+the thing it works around is actually happening here. I nearly shipped a
+suppression for a diagnostic no tool in this repo emits, and the suppression
+would have read for the rest of the project's life as evidence that the rule was
+enforced. The general form: a pragma is a claim that a checker objects. If no
+checker objects, the pragma is documentation of a guarantee you do not have.

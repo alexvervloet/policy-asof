@@ -8,6 +8,13 @@ name: dependabot auto-merge
 # Triggered on the ci workflow completing rather than on pull_request, because
 # `gh pr merge --auto` only waits for checks when the branch has required status
 # checks, and that means branch protection and giving up direct pushes to main.
+#
+# That trigger rules out `dependabot/fetch-metadata`, which reads the
+# `pull_request` key out of the event payload and has no input for naming a pull
+# request. Under `workflow_run` there is no such key, and the action exits with
+# "PR is not from Dependabot, nothing to do". The metadata is in the commit
+# message trailer anyway, which is where scripts/dependabot_update_type.py reads
+# it from.
 
 on:
   workflow_run:
@@ -26,42 +33,54 @@ jobs:
       github.event.workflow_run.actor.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Find the pull request for this run
+      - uses: actions/checkout@v4
+
+      - name: Find the pull request and read Dependabot's own metadata
         id: pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.event.workflow_run.head_sha }}
           REPO: ${{ github.repository }}
         run: |
-          num=$(gh api "repos/$REPO/commits/$SHA/pulls" \
-                  --jq '[.[] | select(.state=="open")][0].number // empty')
-          echo "number=$num" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
 
-      - name: Check the update type
-        id: meta
-        if: steps.pr.outputs.number != ''
-        uses: dependabot/fetch-metadata@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # fetch-metadata reads the PR named here rather than the event.
-          pr-number: ${{ steps.pr.outputs.number }}
+          number=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+                     --jq '[.[] | select(.state=="open")][0].number // empty')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          if [ -z "$number" ]; then
+            echo "no open pull request for $SHA"
+            exit 0
+          fi
+
+          commit=$(gh api "repos/$REPO/commits/$SHA")
+          author=$(jq -r '.author.login // ""' <<< "$commit")
+          verified=$(jq -r '.commit.verification.verified' <<< "$commit")
+
+          # The workflow_run actor is already checked above. This checks the
+          # commit itself, which is the thing being merged.
+          if [ "$author" != "dependabot[bot]" ] || [ "$verified" != "true" ]; then
+            echo "commit is not a verified Dependabot commit (author=$author verified=$verified)"
+            echo "verdict=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          verdict=$(jq -r '.commit.message' <<< "$commit" | python3 scripts/dependabot_update_type.py)
+          echo "verdict=$verdict"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
 
       - name: Merge patch and minor updates
-        if: >
-          steps.pr.outputs.number != '' &&
-          steps.meta.outputs.update-type != 'version-update:semver-major'
+        if: steps.pr.outputs.number != '' && steps.pr.outputs.verdict == 'minor-or-patch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: gh pr merge "${{ steps.pr.outputs.number }}" --repo "$REPO" --squash --delete-branch
 
-      - name: Leave majors for review
-        if: >
-          steps.pr.outputs.number != '' &&
-          steps.meta.outputs.update-type == 'version-update:semver-major'
+      - name: Leave everything else for review
+        if: steps.pr.outputs.number != '' && steps.pr.outputs.verdict != 'minor-or-patch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          VERDICT: ${{ steps.pr.outputs.verdict }}
         run: |
           gh pr comment "${{ steps.pr.outputs.number }}" --repo "$REPO" --body \
-            "CI is green, but this is a major bump so it is left for manual review. Check for a moved import before merging: pgvector relocated \`Vector\` from \`pgvector.psycopg\` to the package root in 0.5.0, and psycopg narrowed \`execute\`'s query type in 3.3."
+            "CI is green. Classified as \`$VERDICT\`, so this is left for manual review. Check for a moved import before merging: pgvector relocated \`Vector\` from \`pgvector.psycopg\` to the package root in 0.5.0, and psycopg narrowed \`execute\`'s query type in 3.3."

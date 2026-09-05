@@ -160,3 +160,101 @@ suppression for a diagnostic no tool in this repo emits, and the suppression
 would have read for the rest of the project's life as evidence that the rule was
 enforced. The general form: a pragma is a claim that a checker objects. If no
 checker objects, the pragma is documentation of a guarantee you do not have.
+
+## 4. The baseline that looks fine is the one to worry about
+
+**Expected.** Phase 2 measures a naive retriever so there is a number to beat.
+The corpus was authored to make it fail in a specific way: an amendment is
+written in reference to the clause it changes, so it is terse and loses on
+similarity to the fat clause it replaced. Measure that, write it down, move on.
+
+**What happened.** It failed exactly as designed, and by a wide margin. Against
+*"How much paid parental leave am I entitled to?"* the superseded clause scores
+**0.7885** and the amendment that replaced it scores **0.4598**. Nothing to
+argue with.
+
+The second baseline is the problem. Indexing the reconstructed versions instead
+of the published documents removes the structural disadvantage, and the
+aggregate goes from 58% correct at rank 1 to 67%. Class by class it swaps which
+half it gets right: `current` goes from 25% to 100%, `historical` from 100% to
+33%. A summary line reading "67%" describes a system that half works.
+
+It does not half work. Two versions of one clause differ by two characters, so
+they embed to nearly the same point:
+
+```
+4.2@v3  "...16 weeks..."   0.7740
+4.2@v1  "...12 weeks..."   0.7700
+```
+
+Across the nine questions whose section has more than one version, the gap
+between the best and second best has a median of **0.0040** and a maximum of
+**0.0101**. The 67% is which side of a four-thousandths coin flip the wording
+landed on. It would move with a different embedding model, a reworded question,
+or an editor fixing a typo in a clause nobody was asking about.
+
+**What this means.** The plan's phase 2 asked for one baseline and one failure,
+and the failure it predicted is the honest one: large, structural, obviously
+disqualifying. The baseline nobody planned for is the dangerous one, because its
+aggregate number is unremarkable and its per-class numbers are only alarming if
+you print them. A system that is wrong a third of the time gets noticed. A
+system that is right two thirds of the time for no reason gets shipped.
+
+**Next time.** Report the margin a decision was made by, not only whether it was
+right. An accuracy figure with no measure of the evidence behind it cannot tell
+a working mechanism apart from a coin that has been landing well. The per-class
+split was already in the plan for a different reason and turned out to be what
+made this visible at all: the aggregate hid an inversion that the two rows put
+side by side.
+
+## 5. A superseded clause was citing the amendment that ended it
+
+**Expected.** `supersede_from` closes what the store believed and re-records the
+stretch that is still true. Straightforward bookkeeping, tested, ten passing
+tests on both clocks.
+
+**What happened.** Designing the phase 2 scorer, which has to say which document
+a retrieved chunk stands for, the answer for the 12 week version of section 4.2
+came back as *Amendment 1*. The amendment that replaced it.
+
+The re-recorded remainder was being inserted with the amendment's
+`source_document_id`, because that is the document being processed at the time.
+Every historical answer this system gave would have cited the document that
+ended the rule rather than the one that wrote it, and phase 4 cites documents.
+
+**Why nothing caught it.** Every test asserted on `text` and on the two clocks,
+which were all correct. Provenance is a fourth column that nothing had needed
+yet, and a column nothing reads is a column nothing checks. It would have
+surfaced in phase 4 as a citation that looked plausible and was wrong, which is
+the expensive place to find it.
+
+**Fix.** The remainder carries the origin row's document. An amendment bounded
+that stretch, it did not write it. There is now a test that reads the document
+title for a March 2026 answer and a May 2026 answer and asserts they differ.
+
+**Next time.** When a write path copies a field because it happens to be in
+scope, ask whether that field is a fact about the operation or a fact about the
+row. `recorded_at` belongs to the operation. `source_document_id` belongs to the
+text, and the text is older than the operation that moved it.
+
+## 6. A cache that quietly changed precision changed the results
+
+**Expected.** Embeddings are cached on disk so a re-run costs nothing. Packing
+each vector as 32-bit floats is half the bytes and plenty of precision for a
+cosine.
+
+**What happened.** The first smoke test of the cache compared a fresh embedding
+against the cached one and they were not equal. The provider returns float64 and
+the cache was handing back float32, so a benchmark run against a warm cache
+produced slightly different numbers from the same benchmark run against a cold
+one. With margins between competing versions of 0.004, that is not a rounding
+detail.
+
+**Fix.** Store float64, and put the format in the filename. The second half
+matters more than the first: a file written in one format and read in the other
+unpacks to the wrong length without raising anything, so a stale cache would
+have produced vectors of 384 dimensions and a plausible looking cosine.
+
+**Next time.** A cache is part of the measurement apparatus. Anything that
+changes what comes back out of it, including precision, belongs in the key, and
+the round trip deserves an equality check written the same day the cache is.

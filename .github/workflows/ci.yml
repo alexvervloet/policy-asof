@@ -25,7 +25,7 @@ jobs:
           --health-retries 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The interpreter here matches the one development runs on. Testing on a
       # different version than you ship is testing a different program.

@@ -20,7 +20,7 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
 
 def main() -> int:
     print("policy-asof setup check\n")
-    results = []
+    results: list[bool] = []
 
     results.append(
         check(

@@ -201,3 +201,26 @@ def test_a_correction_is_allowed_to_overlap_in_valid_time(conn: db.Conn) -> None
 
     rows = read.history(conn, "7.2")
     assert [row["text"] for row in rows] == ["what we said", "what was true"]
+
+
+def test_a_bounded_clause_still_cites_the_document_it_came_from(ingested: db.Conn) -> None:
+    """The amendment on 2026-03-15 ended the 12 week rule. It did not write it.
+
+    An answer about March 2026 quotes the base handbook, and saying it came from
+    the amendment would misattribute every historical answer this system gives.
+    """
+    march = read.as_of(ingested, "4.2", AsOf(date(2026, 3, 1), AFTER_THE_AMENDMENT))
+    may = read.as_of(ingested, "4.2", AsOf(date(2026, 5, 1), AFTER_THE_AMENDMENT))
+    assert march.version is not None and may.version is not None
+
+    def title(row: db.Row) -> str:
+        return str(
+            db.one(
+                ingested.execute(
+                    "select title from documents where id = %s", (row["source_document_id"],)
+                ).fetchall()
+            )["title"]
+        )
+
+    assert title(march.version) == "Employee Handbook 2025"
+    assert title(may.version) == "Amendment 1 to the Employee Handbook 2025"

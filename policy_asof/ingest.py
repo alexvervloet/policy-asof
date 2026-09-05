@@ -21,7 +21,7 @@ from policy_asof import corpus, db
 NAMESPACE = uuid.UUID("6f9619ff-8b86-d011-b42d-00c04fc964ff")
 
 
-def _document_id(doc_id: str) -> uuid.UUID:
+def document_uuid(doc_id: str) -> uuid.UUID:
     return uuid.uuid5(NAMESPACE, doc_id)
 
 
@@ -33,7 +33,7 @@ def _current(conn: db.Conn, section: str) -> list[db.Row]:
     """
     return conn.execute(
         """
-        select id, section_key, version_no, text, valid_from, valid_to
+        select id, section_key, version_no, text, valid_from, valid_to, source_document_id
         from clause_versions
         where section_key = %s and recorded_until is null
         order by valid_from
@@ -113,7 +113,7 @@ def supersede_from(
     believed. A version entirely before the date is left alone.
     """
     version_no = _next_version_no(conn, section)
-    remainders: list[tuple[str, date]] = []
+    remainders: list[tuple[str, date, uuid.UUID]] = []
     supersedes: uuid.UUID | None = None
 
     for row in _current(conn, section):
@@ -123,9 +123,12 @@ def supersede_from(
         if row["valid_from"] <= effective_from:
             supersedes = row["id"]
         if row["valid_from"] < effective_from:
-            remainders.append((row["text"], row["valid_from"]))
+            remainders.append((row["text"], row["valid_from"], row["source_document_id"]))
 
-    for remainder_text, valid_from in remainders:
+    # A remainder keeps the document it came from. The amendment bounded that
+    # stretch, it did not write it, and attributing the old text to the new
+    # document would cite the wrong source for every historical answer.
+    for remainder_text, valid_from, origin in remainders:
         insert_version(
             conn,
             section=section,
@@ -134,7 +137,7 @@ def supersede_from(
             valid_from=valid_from,
             valid_to=effective_from,
             recorded_at=recorded_at,
-            source_document_id=source_document_id,
+            source_document_id=origin,
         )
         version_no += 1
 
@@ -194,7 +197,7 @@ def ingest_document(conn: db.Conn, doc: corpus.Document) -> bool:
     if already_ingested(conn, doc.content_hash):
         return False
 
-    document_id = _document_id(doc.doc_id)
+    document_id = document_uuid(doc.doc_id)
     conn.execute(
         """
         insert into documents

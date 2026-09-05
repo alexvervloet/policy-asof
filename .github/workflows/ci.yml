@@ -29,7 +29,7 @@ jobs:
 
       # The interpreter here matches the one development runs on. Testing on a
       # different version than you ship is testing a different program.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 

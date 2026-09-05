@@ -33,23 +33,33 @@ jobs:
         with:
           python-version: "3.13"
 
-      - run: pip install -r requirements.txt -e .
-
-      - name: Apply migrations
-        env:
-          PGPASSWORD: policy
+      # A virtualenv rather than a global install, because that is what runs
+      # locally and pyright resolves imports against the one named in
+      # pyproject.toml. Two environments that differ is how a checker ends up
+      # green in one place and full of red in the other.
+      - name: Install into .venv
         run: |
-          for f in migrations/*.sql; do
-            psql -h localhost -p 5438 -U policy -d policy_asof -v ON_ERROR_STOP=1 -f "$f"
-          done
+          python -m venv .venv
+          .venv/bin/pip install -q -r requirements.txt -e .
 
-      - run: ruff check .
-      - run: ruff format --check .
-      - run: mypy
+      # Through the runner the application uses, not through psql. A schema that
+      # only comes into being when a person runs the right loop is a schema the
+      # container does not have.
+      - name: Apply migrations
+        run: .venv/bin/python -m policy_asof.migrate
+
+      - run: .venv/bin/ruff check .
+      - run: .venv/bin/ruff format --check .
+      - run: .venv/bin/mypy
+
+      # Both checkers, whole tree. mypy erases LiteralString, so psycopg's
+      # guarantee that a query cannot be built from a variable is invisible to
+      # it and only pyright enforces it.
+      - run: .venv/bin/pyright
 
       # Both directions. A checker that has never been made to fail is a checker
       # nobody has a reason to believe.
-      - run: python scripts/check_clock_discipline.py
-      - run: python scripts/check_clock_discipline.py --self-test
+      - run: .venv/bin/python scripts/check_clock_discipline.py
+      - run: .venv/bin/python scripts/check_clock_discipline.py --self-test
 
-      - run: pytest -q
+      - run: .venv/bin/pytest -q

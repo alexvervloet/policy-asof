@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# Local data and scratch
+results/
+*.db
+
+# OS / editor
+.DS_Store
+
+# Scratch plan for the duration of the build, never a repo artifact
+PLAN.md

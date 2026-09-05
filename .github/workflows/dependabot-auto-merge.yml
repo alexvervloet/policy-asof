@@ -1,0 +1,67 @@
+name: dependabot auto-merge
+
+# A bot that opens pull requests needs something that closes them, or they pile
+# up until a person notices. Patch and minor updates merge once CI is green.
+# Majors are left open on purpose: in the sibling repos every one of them needed
+# a judgment call, usually a coupled peer dependency or a moved import.
+#
+# Triggered on the ci workflow completing rather than on pull_request, because
+# `gh pr merge --auto` only waits for checks when the branch has required status
+# checks, and that means branch protection and giving up direct pushes to main.
+
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find the pull request for this run
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          num=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+                  --jq '[.[] | select(.state=="open")][0].number // empty')
+          echo "number=$num" >> "$GITHUB_OUTPUT"
+
+      - name: Check the update type
+        id: meta
+        if: steps.pr.outputs.number != ''
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # fetch-metadata reads the PR named here rather than the event.
+          pr-number: ${{ steps.pr.outputs.number }}
+
+      - name: Merge patch and minor updates
+        if: >
+          steps.pr.outputs.number != '' &&
+          steps.meta.outputs.update-type != 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: gh pr merge "${{ steps.pr.outputs.number }}" --repo "$REPO" --squash --delete-branch
+
+      - name: Leave majors for review
+        if: >
+          steps.pr.outputs.number != '' &&
+          steps.meta.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr comment "${{ steps.pr.outputs.number }}" --repo "$REPO" --body \
+            "CI is green, but this is a major bump so it is left for manual review. Check for a moved import before merging: pgvector relocated \`Vector\` from \`pgvector.psycopg\` to the package root in 0.5.0, and psycopg narrowed \`execute\`'s query type in 3.3."

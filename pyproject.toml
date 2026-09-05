@@ -52,3 +52,15 @@ exclude = ["*.md"]
 files = ["policy_asof", "tests", "evals", "scripts", "check_setup.py"]
 ignore_missing_imports = true
 strict = true
+
+[tool.pyright]
+# The whole tree, like mypy. The two checkers disagree in useful ways: mypy
+# erases LiteralString, so psycopg's guarantee that a query cannot be built from
+# a variable is invisible to it and only pyright enforces it.
+include = ["policy_asof", "tests", "evals", "scripts", "check_setup.py"]
+exclude = ["**/__pycache__", ".venv"]
+# Without these, pyright resolves imports against the system interpreter, cannot
+# find psycopg, and reports 54 cascading errors on a clean tree.
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "strict"

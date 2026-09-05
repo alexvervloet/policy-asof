@@ -1,6 +1,9 @@
-psycopg[binary]==3.3.5
-psycopg-pool==3.3.1
+PyYAML==6.0.3
+mypy==2.3.1
 pgvector==0.5.0
+psycopg-pool==3.3.1
+psycopg[binary]==3.3.5
+pyright==1.1.407
 pytest==9.1.1
 ruff==0.16.5
-mypy==2.3.1
+types-PyYAML==6.0.12.20250915

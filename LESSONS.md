@@ -74,6 +74,20 @@ comments with it. The comment that explains why an option is passed is the least
 likely thing in the file to be checked, because it reads as the answer to the
 question a reader was about to ask.
 
+**Verified in production, which the original never was.** Within the hour,
+Dependabot rebased the open pull requests, ci ran again, and the fixed workflow
+merged the minor-and-patch group on its own (`mergedBy: app/github-actions`,
+one second after the auto-merge run succeeded) while leaving the pytest 9 and
+mypy 2 majors open with a comment. Both halves observed, on real pull requests,
+with the merge attributable to the workflow rather than to me. That attribution
+is the whole point: in the sibling repo the merges and the silent failures
+looked identical from the outside.
+
+It also showed a smaller bug immediately. Every rebase runs ci again and lands
+in the same step, so one pull request collected the same review note twice. The
+step now checks for its own comment before posting. An automation that repeats
+itself weekly gets muted, and a muted automation is a deleted one.
+
 **Also.** knowledge-desk has the same workflow with the same false comment, so
 its auto-merge has never merged anything either.
 

@@ -1,0 +1,22 @@
+# Port 5438 and database policy_asof are deliberate. A sibling project runs
+# Postgres on 5436, and a test suite that truncates a database it shares with
+# another repo takes a session to work out.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: policy
+      POSTGRES_PASSWORD: policy
+      POSTGRES_DB: policy_asof
+    ports:
+      - "5438:5432"
+    volumes:
+      - policy-asof-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U policy -d policy_asof"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  policy-asof-pgdata:

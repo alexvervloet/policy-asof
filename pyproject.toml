@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "policy-asof"
+version = "0.0.1"
+description = "Point-in-time question answering over a policy corpus that keeps being amended"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+packages = ["policy_asof"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "eval: merge-gating evals",
+    "layer: asserts one named mechanism is present, not that the outcome is right",
+    "real_provider: makes a real model call, excluded from the offline suite",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "C4", "S"]
+ignore = [
+    "E501",  # line length is the formatter's job, and SQL reads better long
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"evals/*" = ["S101"]
+
+[tool.ruff.format]
+# The docs use aligned trailing comments to point at the interesting line, and a
+# formatter collapses those columns. Prose keeps its own formatting.
+exclude = ["*.md"]
+
+[tool.mypy]
+# The whole tree, not just the package. A scope of ["policy_asof"] is how a
+# third of a project ends up with no checker having ever read it.
+files = ["policy_asof", "tests", "evals", "scripts", "check_setup.py"]
+ignore_missing_imports = true
+strict = true

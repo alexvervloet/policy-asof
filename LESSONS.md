@@ -335,3 +335,96 @@ usable is the same decision that made it unnecessary.
 *with the filter applied* as the baseline, not the unfiltered exact scan. The
 unfiltered number here is 148 ms, and against that anything looks good. The
 filtered number is 3.5 ms, and against that the index has nothing to sell.
+
+## 9. The harness translated every case into English and asked a different question
+
+**Expected.** The gold set names two instants per case. The answer layer takes a
+question. So the benchmark writes each case as a sentence, `"...(on
+2026-03-01)"` for an ordinary question and `"What did you tell me on ... about
+this: ..."` for one asking what the system used to say, and the resolver turns
+it back into the pair of instants it started from. A round trip through English,
+which is what a person would type anyway.
+
+**What happened.** 12/15 outcomes and 8/12 citations, with the four citation
+failures landing in exactly the classes where the two clocks disagree:
+historical, retroactive, correction. That clustering is what made it worth
+looking at rather than explaining away.
+
+The branch that chose the phrasing read `if case.known_at < NOW`. The gold set's
+present is `2026-06-01T00:00:00Z` and the harness ran with
+`2026-06-01T12:00:00Z`, so that condition was true for every case in the file.
+Every question took the recollection branch, every `known_at` was rewritten to
+the case's `valid_at`, and the harness confidently measured fifteen questions
+nobody had asked. Handing the instants in directly instead: 14/15 and 12/12.
+
+**What this means.** The bug is a twelve-hour offset in a comparison, and it is
+not the lesson. The lesson is that an eval which phrases its own inputs is
+testing the phrasing, and it will keep reporting failures of the component it
+names. Date resolution has its own tests. Putting it in the path of every answer
+measurement meant a resolver bug and an answer-layer bug were indistinguishable
+in the results table, and the one that actually existed was in neither.
+
+**Next time.** When a component's input can be supplied directly, supply it, and
+measure the translation layer separately with its own gold. If a harness has to
+render structured data into prose to feed the thing under test, the rendering is
+a component too and it needs its own tests before its output is trusted. The
+tell was the clustering: four failures, all in the classes that depend on the
+field the rendering was mangling.
+
+## 10. The coverage check answers a different question than the one it looks like
+
+**Expected.** Three refusal codes, and `no-rule-in-force` covers the lapse case:
+a commuting allowance that ran out on 2025-12-31 with nothing replacing it, asked
+about in June 2026, should refuse.
+
+**What happened.** It answered. `read.coverage` asks whether **anything at all**
+was in force at that instant, and in June 2026 most of the handbook was, so the
+question went through to retrieval, came back with the three nearest passages
+that survive the temporal predicate, and none of them was about commuting.
+
+Whether the answer is then correct depends on the model noticing that the
+passages do not address the question. Here it did notice and said so. That is a
+model doing the job of a control, and the argument of this whole project is that
+a control you can only verify by reading the output is not a control.
+
+**What this means.** "Is there any rule" and "is there a rule about this" are
+different questions, and the check was named after the second while implementing
+the first. It passes every test written for it, because every test asked about a
+date outside the corpus entirely, where the global and the per-topic answer
+coincide. The gap case is the only one in the set where they differ, and it is
+the only one that failed.
+
+The fix is not another special case. It is a distance floor on the retrieved
+passages: past some threshold there is nothing to answer from, whatever the
+clocks say. That is a coverage-versus-risk tradeoff with a curve behind it
+rather than a constant, so it belongs in phase 5 next to the other numbers, and
+it is written down as a hole until then.
+
+**Next time.** For any check that returns "nothing to say", write down which
+quantity it is measuring before writing the query. This is the same shape as a
+bound whose docstring says "every run terminates" while the code measures the
+wrong clock: an invariant stated as a property of the system rather than of the
+thing being measured will hold while measuring the wrong thing.
+
+## 11. The truncate list went stale twice, in the same way, before I stopped writing it by hand
+
+**Expected.** The test fixture truncates the tables between tests. It named them
+in a literal, with a comment saying that adding one is a visible edit.
+
+**What happened.** It went stale when `chunks` arrived and again when
+`answers` and `answer_citations` did, each time as every database test failing
+at setup with `cannot truncate a table referenced in a foreign key constraint`.
+Two migrations, two identical debugging detours, and the comment claiming the
+edit would be visible was written by the person who then failed to make it.
+
+**Fix.** Read the table list out of `pg_tables` and compose the statement with
+`psycopg.sql.Identifier`, which is also the only spelling that keeps a
+string-built query away from the linters. The list cannot go stale now because
+nothing maintains it.
+
+**Next time.** A hand-maintained list that mirrors something the database
+already knows is a list that will drift, and a comment telling the next person
+to remember is not a mechanism. `CASCADE` was the tempting one-word fix and it
+is worse: it would have silently truncated whatever future table happened to
+reference these, which is exactly the class of surprise that fixture exists to
+prevent.

@@ -79,6 +79,40 @@ def as_of(conn: db.Conn, section: str, at: AsOf) -> Reading:
     return Reading(Outcome.NO_RECORD, section, at)
 
 
+def coverage(conn: db.Conn, at: AsOf) -> Outcome:
+    """Whether the store can say anything at all about this pair of instants.
+
+    Used when retrieval comes back empty, to tell the two empty answers apart.
+    A system that reports "no rule was in force" when the truth is "we have no
+    record for that date" tells someone they have no entitlement, which is the
+    more expensive of the two mistakes by a distance.
+    """
+    known = conn.execute(
+        """
+        select 1 from clause_versions
+        where recorded_at <= %(known_at)s
+          and (recorded_until is null or recorded_until > %(known_at)s)
+        limit 1
+        """,
+        {"known_at": at.known_at},
+    ).fetchall()
+    if not known:
+        return Outcome.NO_RECORD
+
+    in_force = conn.execute(
+        """
+        select 1 from clause_versions
+        where valid_from <= %(valid_at)s
+          and (valid_to is null or valid_to > %(valid_at)s)
+          and recorded_at <= %(known_at)s
+          and (recorded_until is null or recorded_until > %(known_at)s)
+        limit 1
+        """,
+        {"valid_at": at.valid_at, "known_at": at.known_at},
+    ).fetchall()
+    return Outcome.IN_FORCE if in_force else Outcome.NO_RULE_IN_FORCE
+
+
 def sections(conn: db.Conn) -> list[str]:
     rows = conn.execute(
         "select distinct section_key from clause_versions order by section_key"

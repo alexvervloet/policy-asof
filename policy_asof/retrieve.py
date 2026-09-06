@@ -22,6 +22,16 @@ from policy_asof import db, embed
 from policy_asof.clock import AsOf
 
 
+def candidate_from(row: db.Row) -> Candidate:
+    return Candidate(
+        chunk_id=str(row["id"]),
+        clause_version_id=str(row["clause_version_id"]),
+        section=str(row["section_key"]),
+        text=str(row["text"]),
+        distance=float(row["distance"]),
+    )
+
+
 @dataclass(frozen=True)
 class Candidate:
     chunk_id: str
@@ -58,16 +68,37 @@ def as_of(conn: db.Conn, query: embed.Vector, at: AsOf, k: int = 5) -> list[Cand
             "k": k,
         },
     ).fetchall()
-    return [
-        Candidate(
-            chunk_id=str(row["id"]),
-            clause_version_id=str(row["clause_version_id"]),
-            section=str(row["section_key"]),
-            text=str(row["text"]),
-            distance=float(row["distance"]),
-        )
-        for row in rows
-    ]
+    return [candidate_from(row) for row in rows]
+
+
+def ignoring_valid_time(
+    conn: db.Conn, query: embed.Vector, at: AsOf, k: int = 5
+) -> list[Candidate]:
+    """The same search with the valid-time half of the predicate dropped.
+
+    Used only to classify a refusal, never to answer. If a question finds
+    nothing in force but finds something close once valid time is ignored, then
+    the handbook does cover the topic and simply had no rule on that day, which
+    is a different answer from "we have nothing about that at all".
+
+    Transaction time still applies. Nothing this system did not know at
+    `known_at` may influence what it says, even about why it is refusing.
+    """
+    db.with_vectors(conn)
+    rows = conn.execute(
+        """
+        select id, clause_version_id, section_key, text,
+               embedding <=> %(query)s as distance
+        from chunks
+        where embedding_model = %(model)s
+          and recorded_at <= %(known_at)s
+          and (recorded_until is null or recorded_until > %(known_at)s)
+        order by embedding <=> %(query)s
+        limit %(k)s
+        """,
+        {"query": Vector(query), "model": embed.model_name(), "known_at": at.known_at, "k": k},
+    ).fetchall()
+    return [candidate_from(row) for row in rows]
 
 
 def unfiltered(conn: db.Conn, query: embed.Vector, k: int = 5) -> list[Candidate]:
@@ -89,13 +120,4 @@ def unfiltered(conn: db.Conn, query: embed.Vector, k: int = 5) -> list[Candidate
         """,
         {"query": Vector(query), "model": embed.model_name(), "k": k},
     ).fetchall()
-    return [
-        Candidate(
-            chunk_id=str(row["id"]),
-            clause_version_id=str(row["clause_version_id"]),
-            section=str(row["section_key"]),
-            text=str(row["text"]),
-            distance=float(row["distance"]),
-        )
-        for row in rows
-    ]
+    return [candidate_from(row) for row in rows]

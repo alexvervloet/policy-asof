@@ -105,6 +105,8 @@ def measure(
     questions = embed.embed([case.question for case in cases], input_type="query")
     scores: dict[str, Score] = {}
     for case, query in zip(cases, questions, strict=True):
+        if case.section is None:
+            continue  # an off-topic question is about no clause
         reading = read.as_of(conn, case.section, case.at)
         if reading.version is None:
             continue

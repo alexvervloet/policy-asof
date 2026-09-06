@@ -18,7 +18,9 @@ from policy_asof import corpus, db, ingest
 @pytest.fixture
 def conn() -> Iterator[db.Conn]:
     with db.pool().connection() as connection:
-        connection.execute("truncate clause_versions, documents")
+        # Every table that references another has to be named here rather
+        # than reached through CASCADE, so adding one is a visible edit.
+        connection.execute("truncate chunks, clause_versions, documents")
         yield connection
         connection.rollback()
 

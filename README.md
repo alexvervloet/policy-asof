@@ -50,16 +50,22 @@ The deliverable is `RESULTS.md`, not the application:
 
 ## Status
 
-Phase 2. The store answers point-in-time questions from the command line, and
-both naive retrieval baselines have been measured against it. There is no model
-in the loop yet.
+Phase 3. The store answers point-in-time questions, and retrieval now asks it
+the same way: the bitemporal predicate runs inside the query that produces the
+candidates. There is no model in the loop yet.
 
 The short version of [RESULTS.md](RESULTS.md): indexing the documents as
 published gets current questions right 25% of the time, because an amendment is
 a terse memo that loses on similarity to the clause it replaces (0.4598 against
 0.7885). Indexing the reconstructed versions with no temporal filter scores
 better overall and is worse, because the versions of one clause differ by two
-characters and the median margin deciding between them is 0.0040.
+characters and the median margin deciding between them is 0.0040. As-of
+retrieval gets all twelve right, and the interesting part is why that is weaker
+evidence than it sounds.
+
+There is also a negative result worth reading: a vector index is measurably the
+wrong choice here. A selective temporal predicate is evaluated during the scan,
+so an exact scan runs in 3.5 ms where HNSW takes 37.7 ms.
 
 ## Running it
 

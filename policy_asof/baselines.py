@@ -40,7 +40,7 @@ def published_index() -> list[Chunk]:
     """
     chunks: list[Chunk] = []
     for doc in corpus.load():
-        document_id = ingest.document_uuid(doc.doc_id)
+        document_id = ingest.document_uuid(doc.content_hash)
         if doc.kind == "base":
             for clause in doc.clauses:
                 heading = f"{clause.section} {clause.heading}\n" if clause.heading else ""

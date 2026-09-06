@@ -16,13 +16,22 @@ from datetime import date, datetime
 
 from policy_asof import corpus, db
 
-# Document ids are stable across runs, so a re-ingest of the same corpus writes
-# the same rows rather than a second copy under new keys.
+# Document ids are derived from the bytes, not from the name in the front
+# matter. Two reasons, and the second one cost a debugging detour.
+#
+# A re-ingest of an unchanged corpus writes the same rows rather than a second
+# copy under new keys, which is the obvious one.
+#
+# And a document that is edited is a different document. Keying on the name
+# assumed a name identifies one immutable text, so editing a file and
+# re-ingesting collided on the primary key with no useful message. Keyed on
+# content, the edit is what it actually is: a new publication, with the old row
+# still on record as evidence of what was published before.
 NAMESPACE = uuid.UUID("6f9619ff-8b86-d011-b42d-00c04fc964ff")
 
 
-def document_uuid(doc_id: str) -> uuid.UUID:
-    return uuid.uuid5(NAMESPACE, doc_id)
+def document_uuid(content_hash: str) -> uuid.UUID:
+    return uuid.uuid5(NAMESPACE, content_hash)
 
 
 def _current(conn: db.Conn, section: str) -> list[db.Row]:
@@ -197,7 +206,7 @@ def ingest_document(conn: db.Conn, doc: corpus.Document) -> bool:
     if already_ingested(conn, doc.content_hash):
         return False
 
-    document_id = document_uuid(doc.doc_id)
+    document_id = document_uuid(doc.content_hash)
     conn.execute(
         """
         insert into documents

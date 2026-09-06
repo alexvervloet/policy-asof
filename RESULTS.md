@@ -122,15 +122,130 @@ is a context window holding two contradictory numbers for the same rule, handed
 to a model with nothing to say which applies. Phase 4 measures what a model does
 with that. It is not going to be good.
 
-## What phase 3 has to beat
+## Phase 3: as-of retrieval
 
-| | baseline (a) | baseline (b) | as-of retrieval |
+The same twelve versions, indexed into a `chunks` relation that carries both
+clocks next to the vector, retrieved with the bitemporal predicate inside the
+query that produces the candidates.
+
+**(c) as-of retrieval**
+
+| question class | n | correct @1 | correct @5 | superseded cited @1 | blended @5 |
+|---|---|---|---|---|---|
+| current | 4 | 4/4 (100%) | 4/4 (100%) | 0/4 (0%) | 0/4 (0%) |
+| historical | 3 | 3/3 (100%) | 3/3 (100%) | 0/3 (0%) | 0/3 (0%) |
+| retroactive | 2 | 2/2 (100%) | 2/2 (100%) | 0/2 (0%) | 0/2 (0%) |
+| correction | 2 | 2/2 (100%) | 2/2 (100%) | 0/2 (0%) | 0/2 (0%) |
+| gap | 1 | 1/1 (100%) | 1/1 (100%) | 0/1 (0%) | 0/1 (0%) |
+| **all** | 12 | 12/12 (100%) | 12/12 (100%) | 0/12 (0%) | 0/12 (0%) |
+
+### Read the 100% correctly
+
+It is not a strong retriever. It is the same embedding model that scored 58% and
+67%, and the questions are the same. What changed is that the version-choice
+problem was removed from similarity's hands rather than solved by it. After the
+predicate runs there is at most one version of each section left, so ranking
+only has to pick the right *section*, and picking one of six sections from a
+plainly worded question is not a hard problem.
+
+`blended @5` going to 0% is worth separating from the rest, because it is not a
+measurement. Two versions of one section cannot both survive the predicate, and
+that is guaranteed by the exclusion constraint on `clause_versions` rather than
+observed in this run. It would still be 0% with a worse embedding model or a
+worse question.
+
+So the honest summary is that phase 3 does not make retrieval better. It moves
+the failure somewhere else, and the somewhere else is a smaller place: wrong
+section, and questions the corpus cannot answer at all. Both are phase 4 and 5
+problems, and the refusal cases held back from these tables are where they get
+measured.
+
+### The three side by side
+
+| | (a) as published | (b) versions, unfiltered | (c) as-of |
 |---|---|---|---|
-| correct @1 | 58% | 67% | phase 3 |
-| superseded cited @1 | 42% | 33% | phase 3 |
-| blended @5 | 92% | 100% | phase 3 |
-| decided by a margin of | 0.33, structural | 0.0040, noise | phase 3 |
+| correct @1 | 58% | 67% | **100%** |
+| superseded cited @1 | 42% | 33% | **0%** |
+| blended @5 | 92% | 100% | **0%** |
+| decided by | 0.33, structural bias | 0.0040, noise | a predicate |
 
-The target is not a better number in the first row. It is the last row: a
-decision made by a predicate that is true or false rather than by four
-thousandths of a cosine.
+The last row is the point. The first row is a consequence.
+
+## Does the temporal predicate defeat the vector index?
+
+Twelve rows cannot answer that, so `evals/index_bench.py` builds a synthetic
+corpus at a size where it can: 50,000 rows of `vector(768)` clustered around 200
+centroids, in a table with the same shape as `chunks`. Two probes, one asking
+about today where 33.1% of rows survive the predicate, one asking about an early
+date where **0.4%** do.
+
+| configuration | rows returned (of 5) | p50 | p95 | recall@5 | distance ratio |
+|---|---|---|---|---|---|
+| exact scan, filtered, current | 5.0 | 35.7 ms | 49.0 ms | exact | 1.000 |
+| exact scan, filtered, historical | 5.0 | **3.5 ms** | 4.7 ms | exact | 1.000 |
+| exact scan, unfiltered | 5.0 | 148.4 ms | 158.4 ms | exact | 1.000 |
+| hnsw, unfiltered | 5.0 | 17.1 ms | 18.8 ms | 0.172 | 1.020 |
+| hnsw, filtered, current | 5.0 | 26.0 ms | 28.0 ms | 0.144 | 1.022 |
+| hnsw + iterative scan, filtered, current | 5.0 | 25.8 ms | 43.3 ms | 0.144 | 1.022 |
+| hnsw, filtered, historical | 5.0 | **37.7 ms** | 47.0 ms | 0.752 | 1.004 |
+| hnsw + iterative scan, filtered, historical | 5.0 | 37.8 ms | 48.4 ms | 0.752 | 1.004 |
+
+HNSW build time: **79.9s** for 50,000 rows, and every insert afterwards pays
+graph maintenance.
+
+**The predicate does not defeat the index.** The plan for the filtered query is
+an index scan with the temporal conditions applied as it walks:
+
+```
+Limit (actual rows=5 loops=1)
+  ->  Index Scan using bench_chunks_hnsw on bench_chunks (actual rows=5 loops=1)
+        Order By: (embedding <=> '[...768 floats...]'::vector)
+        Filter: ((valid_from <= '2024-02-15'::date) AND ((valid_to IS NULL) OR ...))
+        Rows Removed by Filter: 1172
+```
+
+That is the payoff for denormalising both clocks onto the same relation as the
+vector. A sibling project put its access-control filter on a joined table and
+found the planner would not use the vector index at all, which is the failure
+this schema was shaped to avoid.
+
+**And the index is still the wrong choice.** Look at the historical row. The
+exact scan runs in **3.5 ms** and HNSW takes **37.7 ms**, ten times slower, for
+an approximate answer. The reason is the same fact from the other side: the
+temporal predicate is evaluated during the scan, so only the 0.4% of rows that
+survive it ever have a distance computed. The predicate is itself a very good
+index, and it gets better the more historical the question is. HNSW cannot use
+that, because it walks its graph first and discards what the filter rejects
+afterwards, doing more work the more selective the filter is.
+
+Even on the friendlier probe the index buys 35.7 ms against 26.0 ms, a 1.4x
+saving for an approximate answer, an 80 second build, and a write penalty on
+every ingest.
+
+So: **no vector index**, and the reasoning is on the record with the numbers
+that produced it. The threshold to revisit is when a question's predicate stops
+being selective, which here would mean a corpus where most clauses are current
+and the working set no longer fits in memory. A sibling project measures where
+that cliff sits, at a few million vectors.
+
+Two things this did not show. The known failure where a selective filter starves
+an approximate search, so it returns fewer than k rows, did not reproduce: every
+configuration returned all five. `hnsw.iterative_scan`, which exists to fix that,
+therefore changed nothing here, and its column is in the table so that the null
+result is on the record rather than absent from it.
+
+The recall column needs one caveat. Set overlap understates badly when
+candidates tie, and 250 rows around one centroid are all nearly equidistant, so
+picking a different five of them scores 0.144 while returning answers that are
+2% worse by distance. The distance ratio column is the honest reading: HNSW's
+answers are between 0.4% and 2.2% further away than exact, which is fine. It is
+the latency that disqualifies it here, not the approximation.
+
+## What phase 4 has to handle
+
+Retrieval now hands the model exactly one version of each relevant clause. Every
+remaining way to be wrong is downstream: citing it without its date, answering
+when the honest response is that no rule was in force, resolving "when I joined"
+to the wrong instant, or reading an instruction out of a document body. Those
+are the refusal cases and the adversarial cases, and none of them are measured
+yet.

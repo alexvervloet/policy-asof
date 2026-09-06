@@ -316,10 +316,108 @@ correct version in front of the model and recorded enough to prove it later.
 Whether the sentence that came back says 16 weeks or 12 is phase 5's job, along
 with blending, the adversarial cases, and the ablation matrix.
 
-## What phase 5 has to measure
+## Phase 5: the gate, and what it is worth
 
-Everything about what the answer says rather than what it was built from:
-`must_contain` and `must_not_contain`, the refusal pair as two numbers, the
-distance floor that would close the coverage hole above, resolution accuracy on
-natural phrasings, and the ablation matrix that says which of these layers any
-of it actually depends on.
+Twenty-one answer cases across eight classes and nine date-resolution cases,
+scored on what the system says rather than on what it was built from.
+
+**All 30 pass.** Refused when it should have: **6/6**. Answered when it should
+have: **15/15**, reported as a pair because either number alone flatters a
+system that does only one of them. Replayed from their own rows: **21/21**.
+
+A fully green gate is the least interesting sentence in this document, and the
+next two sections are why.
+
+### The distance floor, and its curve
+
+Phase 4 left a hole: the coverage check asked whether *anything* was in force,
+not whether anything was in force about the thing being asked. Closing it needs
+a threshold, and a threshold needs a curve.
+
+| floor | off-topic refused | on-topic still answered |
+|---|---|---|
+| 0.30 | 3/3 | 11/16 |
+| 0.35 | 3/3 | 13/16 |
+| 0.40 | 3/3 | 15/16 |
+| 0.45 | 3/3 | 15/16 |
+| **0.50** | **3/3** | **16/16** |
+| 0.55 | 2/3 | 16/16 |
+| 0.60 | 2/3 | 16/16 |
+| 0.65 | 0/3 | 16/16 |
+
+On-topic questions top out at 0.4534 and off-topic ones bottom out at 0.5219, so
+anything in that gap works and 0.50 sits in the middle. Nineteen points, three
+of them off topic. That is a small sample and the number belongs to
+`nomic-embed-text`: it has to be re-derived for another embedder rather than
+inherited.
+
+The floor alone does not close the hole. The lapsed commuting allowance sits at
+0.4534, under any floor that keeps the real questions answerable. A second
+signal does: run the search again with the valid-time half of the predicate
+dropped, and see whether a much closer passage appears **in another section**.
+
+| case | best in force | ignoring valid time | gap |
+|---|---|---|---|
+| `commuting-allowance-after-it-expired` | 0.4534 | 0.3034 | **0.1499** |
+| every other case | | | at or under 0.0098 |
+
+Fifteen times the separation, so the threshold there is not delicate. The
+same-section condition is the part that took a real failure to find: the hostile
+amendment's clause carries forged marker text, which makes it a worse match for
+the question than the clean version it replaced, and without the section check
+the detector read that as a lapse and refused a question it should have
+answered. The gate caught it on the first run with a real model.
+
+### The ablation matrix
+
+The point of the phase. Remove one layer at runtime, run both suites, and record
+what notices. Everything is measured against a baseline run of the same suites
+with no break.
+
+| break removed | outcome cases newly red | layer evals newly red |
+|---|---|---|
+| `drop-temporal-predicate` | 7 | 5 |
+| `drop-citation-storage` | 15 | 1 |
+| `default-missing-date-to-today` | 4 | 1 |
+| `drop-distance-floor` | 3 | 2 |
+| `collapse-two-clocks` | 2 | 1 |
+| `drop-coverage-check` | 1 | 1 |
+| `drop-lapse-detector` | 1 | 1 |
+| `drop-fence-neutralisation` | **0** | 1 |
+| `fixed-fence-token` | **0** | 2 |
+| `post-filter-instead-of-candidate-filter` | **0** | 2 |
+
+Read the last three rows. **Three of the ten layers are completely invisible to
+outcome testing.** Delete the neutralisation that stops a document forging a
+fence marker, or replace the per-request nonce with a constant an attacker can
+type, or move the temporal predicate from inside the candidate fetch to a filter
+applied afterwards, and every one of the twenty-one answer cases still passes.
+Only the evals written specifically to assert that those mechanisms exist go
+red.
+
+That is not a defect in the gold set. It is what defence in depth does: the
+layers are redundant, so removing one leaves the others producing right answers,
+and an eval suite that only asks "did the right thing happen" will keep
+answering yes while the system is dismantled underneath it. A sibling project
+measured the same thing from the other direction and this phase was built around
+its lesson.
+
+The first run of this matrix was worse. Five of the ten breaks turned nothing
+red at all, and each one turned into a piece of work: two layer evals that did
+not exist, a corpus whose adversarial content never reached the prompt, a gate
+that held a name bound at import so an ablation could not reach it, and a harness
+that reported a crashed run as "nothing noticed". See LESSONS 12 through 16.
+
+### What the gate does not measure
+
+Whether an answer is well written. Judging phrasing needs a model in the scoring
+path, and a model there means a model upgrade shows up as a quality change with
+nobody able to say which it was. That stays out until there is a reason to want
+it, and it would run separately from the correctness number either way.
+
+## What phase 6 has to do
+
+An amendment falsifies answers already given. `answers` and `answer_citations`
+hold everything needed to work out which: the instants, the cited version ids,
+and the corpus revision. The sweep is the last mechanism, and its precision and
+recall against a hand-labelled set are the last numbers.

@@ -241,11 +241,85 @@ picking a different five of them scores 0.144 while returning answers that are
 answers are between 0.4% and 2.2% further away than exact, which is fine. It is
 the latency that disqualifies it here, not the approximation.
 
-## What phase 4 has to handle
+## Phase 4: the answer layer
 
-Retrieval now hands the model exactly one version of each relevant clause. Every
-remaining way to be wrong is downstream: citing it without its date, answering
-when the honest response is that no rule was in force, resolving "when I joined"
-to the wrong instant, or reading an instruction out of a document body. Those
-are the refusal cases and the adversarial cases, and none of them are measured
-yet.
+A model is in the loop now. `qwen3:8b`, run locally, temperature 0, three
+passages per question, the passages fenced with a per-request nonce, every
+answer written to a row that can be rebuilt afterwards.
+
+| case | class | expected | got | outcome | correct version cited | replay |
+|---|---|---|---|---|---|---|
+| `parental-leave-today` | current | answered | answered | yes | yes | reproduced |
+| `expense-cap-today` | current | answered | answered | yes | yes | reproduced |
+| `remote-stipend-today` | current | answered | answered | yes | yes | reproduced |
+| `annual-leave-today` | current | answered | answered | yes | yes | reproduced |
+| `parental-leave-for-a-march-birth` | historical | answered | answered | yes | yes | reproduced |
+| `remote-stipend-august-2025` | historical | answered | answered | yes | yes | reproduced |
+| `equipment-allowance-2025` | historical | answered | answered | yes | yes | reproduced |
+| `expense-cap-february-as-known-in-march` | retroactive | answered | answered | yes | yes | reproduced |
+| `expense-cap-february-as-known-now` | retroactive | answered | answered | yes | yes | reproduced |
+| `remote-stipend-october-as-known-in-january` | correction | answered | answered | yes | yes | reproduced |
+| `remote-stipend-october-as-known-now` | correction | answered | answered | yes | yes | reproduced |
+| `commuting-allowance-while-it-ran` | gap | answered | answered | yes | yes | reproduced |
+| `commuting-allowance-after-it-expired` | gap | no-rule-in-force | **answered** | **no** | - | reproduced |
+| `parental-leave-before-the-handbook` | out-of-coverage | no-rule-in-force | no-rule-in-force | yes | - | reproduced |
+| `parental-leave-asked-before-anything-was-recorded` | out-of-coverage | no-record | no-record | yes | - | reproduced |
+
+**Outcome correct: 14/15. Correct version among the citations: 12/12. Replayed
+byte for byte: 15/15.**
+
+The instants are handed to the answer layer rather than phrased in English,
+deliberately. Date resolution is a separate component with its own tests, and an
+eval that has to write each case as a sentence and hope the parser recovers it
+is measuring the parser whatever the column headings say. An earlier version of
+this table did exactly that and reported four failures that were all its own.
+See LESSONS 9.
+
+### The one real failure
+
+`commuting-allowance-after-it-expired` asks about a train ticket allowance that
+ran out on 2025-12-31 with nothing replacing it. The honest answer is that no
+rule was in force. The system answered instead.
+
+The coverage check is **global, not per topic**. It asks whether anything at all
+was in force at that instant, and on 2026-06-01 plenty was, so the question goes
+through to retrieval, which returns the three nearest passages that survive the
+predicate. None of them is about commuting, and whether the answer is right then
+depends entirely on the model noticing that and saying so. Here it did, more or
+less, but that is a model doing the work of a control, which is the thing this
+project keeps arguing against.
+
+The gap between "no rule was in force anywhere" and "no rule was in force about
+the thing you asked" needs a per-topic signal, and the obvious one is a distance
+floor on the retrieved passages: if the nearest passage is far enough away,
+there is nothing to answer from. That is a threshold with a coverage-versus-risk
+curve behind it, so it is phase 5 work rather than a one-line fix, and it is on
+the record as a known hole until then.
+
+### Replay
+
+Every answer, including every refusal, rebuilds from its own row: the stored
+citations name clause versions, the stored instants name the pair of clocks, and
+the rebuilt prompt hashes to what was recorded at the time.
+
+Two hashes are stored rather than one, and that turned out to matter. The system
+half of the prompt lives in code and the user half is built from the corpus, so
+when a replay diverges the pair says which of them moved. There are tests for
+both directions: edit the system prompt and the verdict is
+`system-prompt-changed`, edit a cited clause's text in place and it is
+`passages-changed`. One combined hash could only ever say that something did.
+
+### What is not measured here
+
+Whether the answer is *right*. This table checks that the machinery put the
+correct version in front of the model and recorded enough to prove it later.
+Whether the sentence that came back says 16 weeks or 12 is phase 5's job, along
+with blending, the adversarial cases, and the ablation matrix.
+
+## What phase 5 has to measure
+
+Everything about what the answer says rather than what it was built from:
+`must_contain` and `must_not_contain`, the refusal pair as two numbers, the
+distance floor that would close the coverage hole above, resolution accuracy on
+natural phrasings, and the ablation matrix that says which of these layers any
+of it actually depends on.

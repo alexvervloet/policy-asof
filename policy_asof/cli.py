@@ -12,7 +12,8 @@ import argparse
 import sys
 from datetime import UTC, date, datetime
 
-from policy_asof import db, ingest, read
+from policy_asof import answer as answering
+from policy_asof import db, ingest, read, replay
 from policy_asof.clock import AsOf, now
 
 
@@ -67,6 +68,41 @@ def cmd_history(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ask(args: argparse.Namespace) -> int:
+    asked_at = args.now or now()
+    with db.connection() as conn:
+        result = answering.ask(conn, args.question, now=asked_at, k=args.k)
+        answering.store(conn, result, asked_at=asked_at)
+
+    print(f"answer {result.id}")
+    print(f"  outcome     {result.outcome}")
+    print(f"  date        {result.resolution}", end="")
+    print(f", in force on {result.at.valid_at}" if result.at else "")
+    if result.at:
+        print(f"  as known at {result.at.known_at:%Y-%m-%d %H:%M %Z}")
+    print(f"  model       {result.model}")
+    if result.refusal_reason:
+        print(f"\n  {result.refusal_reason}")
+    if result.text:
+        print(f"\n{result.text}\n")
+        print("  cited:")
+        for citation in result.citations:
+            upper = citation.valid_to or "open"
+            print(f"    section {citation.section}, in force [{citation.valid_from} .. {upper})")
+    return 0
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    with db.connection() as conn:
+        outcome = replay.replay(conn, args.answer_id)
+    print(f"{outcome.answer_id}: {outcome.verdict}")
+    print(f"  {outcome.detail}")
+    if args.show and outcome.rebuilt_prompt:
+        print()
+        print(outcome.rebuilt_prompt)
+    return 0 if outcome.verdict is replay.Verdict.REPRODUCED else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="policy-asof", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -84,6 +120,17 @@ def main(argv: list[str] | None = None) -> int:
     history = commands.add_parser("history", help="every version of a section, on both clocks")
     history.add_argument("--section", required=True)
     history.set_defaults(run=cmd_history)
+
+    ask = commands.add_parser("ask", help="answer a question as of an instant")
+    ask.add_argument("question")
+    ask.add_argument("--k", type=int, default=3, help="passages to retrieve")
+    ask.add_argument("--now", type=_instant, help="pin the clock, for reproducible runs")
+    ask.set_defaults(run=cmd_ask)
+
+    replaying = commands.add_parser("replay", help="rebuild a stored answer's prompt")
+    replaying.add_argument("answer_id")
+    replaying.add_argument("--show", action="store_true", help="print the rebuilt prompt")
+    replaying.set_defaults(run=cmd_replay)
 
     args = parser.parse_args(argv)
     result: int = args.run(args)

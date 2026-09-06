@@ -258,3 +258,80 @@ have produced vectors of 384 dimensions and a plausible looking cosine.
 **Next time.** A cache is part of the measurement apparatus. Anything that
 changes what comes back out of it, including precision, belongs in the key, and
 the round trip deserves an equality check written the same day the cache is.
+
+## 7. My synthetic benchmark measured nothing twice before it measured anything
+
+**Expected.** The shipped corpus is twelve rows, so answering "does the temporal
+predicate defeat the vector index" needs a synthetic one. Generate 50,000
+vectors, build HNSW, compare recall and latency against an exact scan. The
+generator is the boring part.
+
+**What happened.** The first run reported `recall@5 = 0.000` for every HNSW
+configuration. A perfect zero across the board is not a result, it is a broken
+harness, and the cause was the vectors: uniformly random points in 768
+dimensions are all roughly equidistant, so the true nearest five are a lottery
+and any approximate search picks a different five with the same distances.
+
+Fixing that by clustering the rows around 200 centroids produced recall of
+0.104. Better, still meaningless, and this time the arithmetic was in the noise
+scale. A unit centroid has norm 1, and per-dimension Gaussian noise of sigma has
+norm `sigma * sqrt(768)`, so sigma of 0.35 gave a noise vector nine times longer
+than the thing it was perturbing. The corpus was uniformly random again, wearing
+a cluster's clothes.
+
+At sigma = 0.02 the mean cosine distance from a row to its own centroid is
+0.1255 and to a different one is 1.0093, which is a corpus with neighbourhoods
+in it, and the numbers started meaning something.
+
+**And the metric was still wrong.** With 250 rows around each centroid, the true
+top five are near-identical, so returning a different five scores 0.172 on set
+overlap while being 2% worse by distance. Set recall is the standard number and
+it is the wrong one when candidates tie. The table now carries a distance ratio
+next to it, and the ratio is what the conclusion rests on.
+
+**Fix.** The generator prints the separation it achieved and refuses to report
+recall when the corpus has no neighbourhood structure, which is the same shape
+as the gold self-check: measure the apparatus before measuring with it.
+
+**Next time.** A synthetic corpus is an experiment about the corpus first and
+the system second. Before trusting a single figure out of one, check that the
+data has the property the metric assumes, and write that check into the harness
+rather than doing it once by eye. The tell here was available immediately and I
+nearly explained it away: a metric that returns exactly 0.000 for every
+configuration is not telling you about the configurations.
+
+## 8. The index was fine. It was also ten times slower than not having one
+
+**Expected.** The schema puts both clocks on the same relation as the vector,
+specifically so the planner can use a vector index with the temporal predicate
+in place. A sibling project found an access-control filter on a joined table
+defeated its index entirely, so this was the lesson applied in advance. Measure
+it, confirm the index is usable, add it.
+
+**What happened.** The first half worked exactly as designed. The plan is an
+`Index Scan using bench_chunks_hnsw` with the temporal conditions applied as a
+filter while it walks, so denormalising the clocks did what it was for.
+
+The second half inverted the conclusion. On a question about an early date,
+where 0.4% of rows survive the predicate, the exact sequential scan runs in
+**3.5 ms** and the HNSW scan takes **37.7 ms**. The index is ten times slower
+than not having one, and it costs 80 seconds to build and a write penalty
+forever.
+
+The reason is the same fact read from the other end. Postgres evaluates the
+`where` clause during the scan, so a selective temporal predicate means only a
+couple of hundred rows ever have a distance computed. **The predicate is itself
+an excellent index, and it gets better the more historical the question is.**
+HNSW cannot use that, because it walks its graph first and discards what the
+filter rejects afterwards, so it does more work the more selective the filter
+gets. The two techniques are competing for the same job and the cheap one wins.
+
+**What this means.** "Can the planner use the index with my filter in place" is
+a different question from "is the index worth having", and answering the first
+one well made me stop asking the second. The design decision that made the index
+usable is the same decision that made it unnecessary.
+
+**Next time.** For any filter that runs before ranking, measure the exact scan
+*with the filter applied* as the baseline, not the unfiltered exact scan. The
+unfiltered number here is 148 ms, and against that anything looks good. The
+filtered number is 3.5 ms, and against that the index has nothing to sell.

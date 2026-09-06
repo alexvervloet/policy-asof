@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from typing import Any
 
 import psycopg
+from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -52,6 +53,23 @@ def close_pool() -> None:
 def connection() -> Iterator[Conn]:
     with pool().connection() as conn:
         yield conn
+
+
+def with_vectors(conn: Conn) -> Conn:
+    """Teach this connection the `vector` type.
+
+    Called explicitly rather than from the pool's configure hook, because the
+    adapter has to look up the type's OID and the type does not exist until
+    migration 0000 has run. A pool that registered on every connection could
+    not open one on a fresh database.
+
+    Skipping it is not an option worth having: an unregistered list of floats
+    binds as `double precision[]`, which inserts fine because the column supplies
+    the type, and then fails at query time with "operator does not exist" the
+    first time it appears in an expression with nothing to infer from.
+    """
+    register_vector(conn)
+    return conn
 
 
 def one(rows: list[Row]) -> Row:

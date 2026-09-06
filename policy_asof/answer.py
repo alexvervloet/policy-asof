@@ -32,12 +32,33 @@ from policy_asof.prompt import Passage
 from policy_asof.read import Outcome
 from policy_asof.resolve import Resolution, Resolved, resolve
 
+# Two thresholds, both fitted to the gold set rather than picked, and both
+# reported with the curve behind them in RESULTS.md.
+#
+# FLOOR: past this cosine distance there is nothing on topic to answer from. The
+# gold set's on-topic questions top out at 0.4534 and its off-topic ones bottom
+# out at 0.5219, so anything in that gap works and 0.50 sits in the middle of
+# it. Nineteen points and three of them off topic, which is a small sample: this
+# number belongs to `nomic-embed-text` and has to be re-derived for any other
+# embedder rather than inherited.
+#
+# LAPSE_GAP: when dropping the valid-time half of the predicate finds a much
+# closer passage *in another section*, the handbook does cover the topic and
+# simply had no rule in force that day. The lapsed commuting allowance shows a
+# gap of 0.1499 and every other case in the set is at or under 0.0098, so this
+# separates by fifteen times rather than by a hair. The section check is the
+# other half: a closer passage in the same section is an earlier wording of a
+# clause that is in force, not evidence that nothing is.
+FLOOR = 0.50
+LAPSE_GAP = 0.05
+
 
 class AnswerOutcome(StrEnum):
     ANSWERED = "answered"
     AMBIGUOUS_DATE = "ambiguous-date"
     NO_RECORD = "no-record"
     NO_RULE_IN_FORCE = "no-rule-in-force"
+    NO_PASSAGE_ON_TOPIC = "no-passage-on-topic"
 
 
 @dataclass(frozen=True)
@@ -170,6 +191,50 @@ def ask(
             resolution=resolved.outcome,
             at=at,
             refusal_reason=f"no passage was in force on {at.valid_at}",
+            corpus_rev=revision,
+            fence_token=fence.token(answer_id),
+        )
+
+    nearest = candidates[0].distance
+    # Checked before the floor, because naming the clause that lapsed is more
+    # use to the asker than reporting that nothing was found. Asked with valid
+    # time dropped and transaction time kept, because nothing the system did not
+    # know at `known_at` may influence what it says, even about why it refuses.
+    lapsed = retrieve.ignoring_valid_time(conn, query, at, k=1)
+    if (
+        lapsed
+        and nearest - lapsed[0].distance > LAPSE_GAP
+        and lapsed[0].distance <= FLOOR
+        # A closer passage in the *same* section is a different wording of a
+        # clause that is in force, not a lapsed one. Without this the detector
+        # fires whenever an amendment reads less like the question than the text
+        # it replaced, which the gate caught on the first run with a real model.
+        and lapsed[0].section != candidates[0].section
+    ):
+        return Answer(
+            id=answer_id,
+            question=question,
+            outcome=AnswerOutcome.NO_RULE_IN_FORCE,
+            resolution=resolved.outcome,
+            at=at,
+            refusal_reason=(
+                f"section {lapsed[0].section} covers this and was not in force on {at.valid_at}"
+            ),
+            corpus_rev=revision,
+            fence_token=fence.token(answer_id),
+        )
+
+    if nearest > FLOOR:
+        return Answer(
+            id=answer_id,
+            question=question,
+            outcome=AnswerOutcome.NO_PASSAGE_ON_TOPIC,
+            resolution=resolved.outcome,
+            at=at,
+            refusal_reason=(
+                f"the closest passage is {nearest:.3f} away, past the {FLOOR} floor, "
+                "so the handbook has nothing on this"
+            ),
             corpus_rev=revision,
             fence_token=fence.token(answer_id),
         )

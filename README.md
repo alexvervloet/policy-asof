@@ -50,10 +50,11 @@ The deliverable is `RESULTS.md`, not the application:
 
 ## Status
 
-Phase 4. A model is in the loop. Ask a question, get an answer bound to a date,
-citing the version of each clause that was in force on it, or one of three
-refusals that say which kind of nothing it found. Every answer, including every
-refusal, can be rebuilt from its own row afterwards.
+Phase 5. A model is in the loop, and there is a merge gate around it. Ask a
+question, get an answer bound to a date, citing the version of each clause that
+was in force on it, or one of four refusals that say which kind of nothing it
+found. Every answer, including every refusal, can be rebuilt from its own row
+afterwards.
 
 The short version of [RESULTS.md](RESULTS.md): indexing the documents as
 published gets current questions right 25% of the time, because an amendment is
@@ -68,9 +69,14 @@ There is also a negative result worth reading: a vector index is measurably the
 wrong choice here. A selective temporal predicate is evaluated during the scan,
 so an exact scan runs in 3.5 ms where HNSW takes 37.7 ms.
 
-With the answer layer on top: 14/15 outcomes correct, 12/12 answers citing the
-version that was actually in force, 15/15 rebuildable from their stored rows.
-The one failure is on the record as a hole rather than smoothed over.
+With the answer layer and the gate on top: 30/30 cases pass, refusing 6/6 of
+what it should refuse and answering 15/15 of what it should answer.
+
+The number worth reading is not that one. `scripts/ablate.py` removes each layer
+in turn and runs both suites: **three of the ten layers can be deleted with
+every one of the twenty-one answer cases still passing**. Only the evals written
+to assert those mechanisms exist notice. That table, not the 30/30, is what this
+project is for.
 
 ## Running it
 

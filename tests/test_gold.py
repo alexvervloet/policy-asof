@@ -12,9 +12,18 @@ import pytest
 
 from evals import gold
 from policy_asof import db
-from policy_asof.read import Outcome
+from policy_asof.answer import AnswerOutcome
 
-CLASSES = {"current", "historical", "retroactive", "correction", "gap", "out-of-coverage"}
+CLASSES = {
+    "current",
+    "historical",
+    "retroactive",
+    "correction",
+    "gap",
+    "out-of-coverage",
+    "off-topic",
+    "adversarial",
+}
 
 
 def test_every_case_has_a_known_class_and_two_instants() -> None:
@@ -40,8 +49,9 @@ def test_refusal_cases_are_held_back_from_retrieval_scoring() -> None:
     _, cases = gold.load()
     refusals = [case for case in cases if not case.scored_for_retrieval]
     assert {case.expect_outcome for case in refusals} == {
-        Outcome.NO_RULE_IN_FORCE,
-        Outcome.NO_RECORD,
+        AnswerOutcome.NO_RULE_IN_FORCE,
+        AnswerOutcome.NO_RECORD,
+        AnswerOutcome.NO_PASSAGE_ON_TOPIC,
     }
 
 
@@ -82,7 +92,7 @@ def test_a_case_naming_a_section_that_does_not_exist_is_caught(ingested: db.Conn
 
 
 def test_an_unknown_outcome_in_the_file_is_refused() -> None:
-    with pytest.raises(ValueError, match="not a valid Outcome"):
+    with pytest.raises(ValueError, match="not a valid AnswerOutcome"):
         gold.Case(
             id="x",
             question="?",
@@ -90,5 +100,5 @@ def test_an_unknown_outcome_in_the_file_is_refused() -> None:
             valid_at=date(2026, 6, 1),
             known_at=datetime(2026, 6, 1, tzinfo=UTC),
             klass="current",
-            expect_outcome=Outcome("something-else"),
+            expect_outcome=AnswerOutcome("something-else"),
         )

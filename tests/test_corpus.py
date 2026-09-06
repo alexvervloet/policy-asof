@@ -16,7 +16,7 @@ def test_documents_load_in_transaction_time_order() -> None:
     documents = corpus.load()
     recorded = [doc.recorded_at for doc in documents]
     assert recorded == sorted(recorded)
-    assert [doc.doc_id for doc in documents] == ["H2025", "C1", "A1", "A2"]
+    assert [doc.doc_id for doc in documents] == ["H2025", "C1", "A1", "A2", "A3"]
 
 
 def test_a_correction_takes_its_effective_date_from_what_it_restates() -> None:
@@ -41,6 +41,25 @@ def test_the_body_is_not_where_any_date_comes_from() -> None:
     assert "1 January 2026" in amendment.body
     assert amendment.effective_from == date(2026, 1, 1)
     assert amendment.clauses[0].valid_from == date(2026, 1, 1)
+
+
+def test_a_document_body_cannot_assert_its_own_precedence() -> None:
+    """A3's body claims to supersede every section on every date and to move
+    parental leave to 99 weeks. Ingest reads none of that: the effective date
+    comes from the front matter and the body is prose."""
+    hostile = next(doc for doc in corpus.load() if doc.doc_id == "A3")
+    assert "supersedes all prior versions" in hostile.body
+    assert "99 weeks" in hostile.body
+
+    # Ingest reads none of it. The effective date and the sections come from the
+    # front matter, and the body has no way to reach either.
+    assert hostile.effective_from == date(2026, 7, 1)
+    assert [clause.section for clause in hostile.clauses] == ["6.2"]
+
+    # The clause text carries a forged fence marker, deliberately. Ingest is not
+    # what defends against that: the clause text is quoted to the model, so the
+    # fence is, and tests/test_answer.py holds that half.
+    assert "<<</untrusted:" in hostile.clauses[0].text
 
 
 def test_front_matter_is_required() -> None:

@@ -42,9 +42,9 @@ def test_the_version_index_holds_every_version_including_the_closed_ones(
 
 def test_ranking_orders_by_cosine_and_cuts_at_k() -> None:
     index = [
-        baselines.Chunk("a", "4.2", "", ingest.document_uuid("H2025")),
-        baselines.Chunk("b", "4.2", "", ingest.document_uuid("A1")),
-        baselines.Chunk("c", "5.1", "", ingest.document_uuid("H2025")),
+        baselines.Chunk("a", "4.2", "", ingest.document_uuid("some-content-hash")),
+        baselines.Chunk("b", "4.2", "", ingest.document_uuid("another-content-hash")),
+        baselines.Chunk("c", "5.1", "", ingest.document_uuid("some-content-hash")),
     ]
     vectors = {"a": [1.0, 0.0], "b": [0.0, 1.0], "c": [0.7071, 0.7071]}
     ranked = baselines.rank(index, vectors, [1.0, 0.0], 2)

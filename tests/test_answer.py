@@ -29,9 +29,30 @@ def _vector(seed: int) -> list[float]:
 
 @pytest.fixture
 def ready(ingested: db.Conn, monkeypatch: pytest.MonkeyPatch) -> Iterator[db.Conn]:
+    # One axis per topic, so a question about equipment retrieves the equipment
+    # clause rather than whichever tie the stub happened to break first.
+    # Checked in order, and "equipment" comes first on purpose: the hostile
+    # clause mentions parental leave inside its forged marker, so keying on the
+    # first keyword found would file it under the wrong topic.
+    topics = {
+        "equipment": 2,
+        "parental": 1,
+        "expenses": 3,
+        "stipend": 4,
+        "commuting": 5,
+        "annual": 6,
+    }
+
+    def axis(text: str) -> int:
+        lowered = text.lower()
+        for word, axis_index in topics.items():
+            if word in lowered:
+                return axis_index
+        return 7  # nothing in the handbook is about this
+
     def fake(texts: list[str], input_type: str | None = None) -> list[list[float]]:
         del input_type
-        return [_vector(1 if "parental" in text else 2) for text in texts]
+        return [_vector(axis(text)) for text in texts]
 
     monkeypatch.setattr(embed, "embed", fake)
     monkeypatch.setattr(embed, "model_name", lambda: "stub-768")
@@ -163,3 +184,80 @@ def test_a_refusal_is_stored_and_replays_as_a_refusal(ready: db.Conn) -> None:
     outcome = replay.replay(ready, result.id)
     assert outcome.verdict is replay.Verdict.REPRODUCED
     assert "refusal" in outcome.detail
+
+
+@pytest.mark.layer
+def test_an_answer_stores_what_it_was_allowed_to_draw_on(ready: db.Conn) -> None:
+    """Layer L5, the storage half.
+
+    The citations in memory are one thing; the rows that survive the request are
+    what anyone auditing this six months later has. Dropping the write leaves an
+    answer that looks complete and can never be defended.
+    """
+    result = _ask(ready, "How much paid parental leave am I entitled to?")
+    answer.store(ready, result, asked_at=NOW)
+    stored = ready.execute(
+        "select count(*) as n from answer_citations where answer_id = %s",
+        (result.id,),
+    ).fetchall()
+    assert stored[0]["n"] == len(result.citations)
+    assert stored[0]["n"] > 0
+
+
+@pytest.mark.layer
+def test_a_forged_marker_inside_a_clause_never_reaches_the_prompt(ready: db.Conn) -> None:
+    """Layer L7, on the path that matters.
+
+    A document body is prose that never reaches the model. The consolidated
+    clause text does, so a forged marker in *there* is the one that has to be
+    neutralised, and the corpus carries one for exactly this test.
+    """
+    from datetime import date
+
+    from policy_asof.clock import AsOf
+
+    result = answer.ask(
+        ready,
+        "How much can I claim towards home office equipment equipment?",
+        now=NOW,
+        model=provider.Scripted(),
+        k=3,
+        # After 2026-06-15, when the hostile amendment was recorded. Asked as
+        # known at NOW it does not exist yet, which is the store being right and
+        # an earlier version of this test being wrong.
+        at=AsOf(date(2026, 8, 1), datetime(2026, 8, 1, tzinfo=UTC)),
+    )
+    assert result.outcome is AnswerOutcome.ANSWERED
+    _, closer = fence.tags(result.id)
+    assert result.user.count(closer) == len(result.citations)
+    assert "0000000000000000" not in result.user
+    assert fence.REDACTED in result.user
+
+
+@pytest.mark.layer
+def test_a_question_the_handbook_does_not_cover_is_refused(ready: db.Conn) -> None:
+    """Layer L6, the per-topic half.
+
+    Without a floor the nearest three passages are always returned, whatever
+    they are about, and whether the answer is right depends on the model
+    noticing. A control you can only verify by reading the output is not one.
+    """
+    result = _ask(ready, "Who is on call for the payments service this weekend?")
+    assert result.outcome is AnswerOutcome.NO_PASSAGE_ON_TOPIC
+    assert result.citations == ()
+
+
+@pytest.mark.layer
+def test_a_lapsed_clause_is_told_apart_from_a_topic_never_covered(ready: db.Conn) -> None:
+    """Layer L6, the lapse half.
+
+    Section 6.1 ran out on 2025-12-31 with nothing replacing it. "No rule was in
+    force about commuting" and "the handbook says nothing about commuting" are
+    different answers, and only the first one is true.
+    """
+    lapsed = _ask(ready, "Do I get anything towards commuting to the office?")
+    assert lapsed.outcome is AnswerOutcome.NO_RULE_IN_FORCE
+    assert "6.1" in (lapsed.refusal_reason or "")
+
+    never = _ask(ready, "Who is on call for the payments service this weekend?")
+    assert never.outcome is AnswerOutcome.NO_PASSAGE_ON_TOPIC

@@ -10,7 +10,10 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from policy_asof.resolve import Resolution, resolve
+from policy_asof import resolve as resolve_module
+from policy_asof.resolve import Resolution
+
+resolve = resolve_module.resolve
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
@@ -71,13 +74,18 @@ def test_what_cannot_be_pinned_is_refused_rather_than_guessed(question: str) -> 
 
 
 @pytest.mark.layer
-def test_a_missing_date_is_never_silently_today(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_what_cannot_be_pinned_is_refused_rather_than_defaulted() -> None:
     """Layer L1, asserted directly.
 
-    The assumption is allowed. Making it invisible is not, because an answer
-    about today presented as an answer about the day the asker meant is wrong in
-    a way nothing downstream can detect.
+    Called through the module rather than through a name bound at import, so an
+    ablation that replaces the resolver actually reaches this. The first version
+    of this test held a direct reference and stayed green while the layer it
+    names was removed.
     """
-    result = resolve("How much parental leave do I get?", NOW)
-    assert result.outcome is not Resolution.STATED
-    assert result.outcome is Resolution.ASSUMED_TODAY
+    assumed = resolve_module.resolve("How much parental leave do I get?", NOW)
+    assert assumed.outcome is Resolution.ASSUMED_TODAY, "the assumption is allowed"
+
+    for question in ("What was the stipend when I joined?", "What applied in 2024?"):
+        refused = resolve_module.resolve(question, NOW)
+        assert refused.outcome is Resolution.AMBIGUOUS, question
+        assert refused.at is None

@@ -18,7 +18,13 @@ from collections.abc import Iterator
 import pytest
 from psycopg import sql
 
+from evals import breaks
 from policy_asof import corpus, db, ingest
+
+# A break named in the environment applies to the suite as well as to the gate,
+# so `pytest -m layer` under POLICY_ASOF_BREAK answers the question the ablation
+# matrix is asking: which named layer eval notices this layer going away.
+breaks.apply_from_env()
 
 # Applied migrations are schema, not fixture state.
 KEEP = {"schema_migrations"}

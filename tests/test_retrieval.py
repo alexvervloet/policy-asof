@@ -128,3 +128,56 @@ def test_a_vector_of_the_wrong_length_is_refused(
 
 def test_the_declared_dimension_is_read_from_the_catalogue(ingested: db.Conn) -> None:
     assert index.declared_dimension(ingested) == DIMS
+
+
+@pytest.mark.layer
+def test_the_predicate_runs_before_the_limit_not_after(indexed: db.Conn) -> None:
+    """Layer L2, the structural half.
+
+    With k=1 and every version of 4.2 sharing a vector, an unfiltered fetch
+    returns whichever version sorts first and a post-filter then throws it away,
+    leaving nothing. Filtering inside the candidate fetch returns the one that
+    was in force. The two are indistinguishable on outcome at k=5 and differ
+    here, which is the whole reason to assert the structure rather than the
+    result.
+    """
+    query = _vector(1)
+    at = AsOf(date(2026, 3, 1), NOW)
+
+    in_force = retrieve.as_of(indexed, query, at, k=1)
+    assert len(in_force) == 1
+    assert "12 weeks" in in_force[0].text
+
+    unfiltered_then_dropped = [
+        candidate
+        for candidate in retrieve.unfiltered(indexed, query, k=1)
+        if candidate.clause_version_id == in_force[0].clause_version_id
+    ]
+    assert unfiltered_then_dropped != in_force, (
+        "a post-filter at k=1 cannot return what the candidate filter returns"
+    )
+
+
+@pytest.mark.layer
+def test_transaction_time_is_enforced_and_not_only_valid_time(indexed: db.Conn) -> None:
+    """Layer L2, the second clock.
+
+    Every version of section 5.1 embeds identically here, so similarity cannot
+    choose between them and valid time alone cannot either: the retroactive
+    amendment covers February on both readings. Only `recorded_at` separates
+    what was true from what was known, and dropping it leaves this the only
+    thing that notices.
+    """
+    query = _vector(2)
+    february = date(2026, 2, 1)
+
+    as_known_in_march = retrieve.as_of(
+        indexed, query, AsOf(february, datetime(2026, 3, 1, tzinfo=UTC)), k=10
+    )
+    as_known_now = retrieve.as_of(indexed, query, AsOf(february, NOW), k=10)
+
+    def cap(candidates: list[retrieve.Candidate]) -> str:
+        return next(c.text for c in candidates if c.section == "5.1")
+
+    assert "75 EUR" in cap(as_known_in_march)
+    assert "90 EUR" in cap(as_known_now)

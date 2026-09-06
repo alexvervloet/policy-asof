@@ -30,7 +30,7 @@ from policy_asof import db, embed, fence, prompt, provider, read, retrieve
 from policy_asof.clock import AsOf
 from policy_asof.prompt import Passage
 from policy_asof.read import Outcome
-from policy_asof.resolve import Resolution, resolve
+from policy_asof.resolve import Resolution, Resolved, resolve
 
 
 class AnswerOutcome(StrEnum):
@@ -108,9 +108,22 @@ def ask(
     request_id: str | None = None,
     k: int = 3,
     model: provider.Provider | None = None,
+    at: AsOf | None = None,
 ) -> Answer:
+    """`at` skips resolution.
+
+    An eval that has to phrase two instants in English and hope the parser
+    recovers them is measuring the parser, whatever it says on the label. A
+    caller that already knows the instants passes them, and resolution gets
+    measured on its own terms somewhere else.
+    """
     answer_id = request_id or str(uuid.uuid4())
-    resolved = resolve(question, now)
+    # A caller-supplied instant is stated, by the caller rather than by the text.
+    resolved = (
+        Resolved(Resolution.STATED, at, matched="supplied by the caller")
+        if at is not None
+        else resolve(question, now)
+    )
     revision = corpus_revision(conn)
 
     if resolved.outcome is Resolution.AMBIGUOUS or resolved.at is None:

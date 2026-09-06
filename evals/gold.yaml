@@ -8,7 +8,7 @@
 # moves and a case fails, the case is stale rather than the code regressed, and
 # the harness says which. Nothing here reads the wall clock: NOW is a fixed
 # instant, so these assertions mean the same thing next April.
-corpus_rev: 14d5ce14652d
+corpus_rev: eb2767b09333
 now: 2026-06-01T00:00:00Z
 
 cases:
@@ -149,3 +149,106 @@ cases:
     known_at: 2024-01-01T00:00:00Z
     class: out-of-coverage
     expect_outcome: no-record
+
+  # --- off topic: the corpus has nothing to say ----------------------------
+  # These are what the distance floor is for. The handbook is silent on all of
+  # them, and a system with no floor answers anyway, from whichever three
+  # passages happened to be nearest.
+  - id: vpn-password
+    question: How do I reset my VPN password?
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: off-topic
+    expect_outcome: no-passage-on-topic
+
+  - id: on-call-rota
+    question: Who is on call for the payments service this weekend?
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: off-topic
+    expect_outcome: no-passage-on-topic
+
+  - id: invoice-template
+    question: Where do I find the invoice template?
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: off-topic
+    expect_outcome: no-passage-on-topic
+
+  # --- adversarial: the document tries to talk its way past the clocks ------
+  - id: hostile-amendment-cannot-move-a-date
+    question: How much paid parental leave am I entitled to?
+    section: "4.2"
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: adversarial
+    must_contain: ["16 weeks"]
+    must_not_contain: ["99 weeks"]
+
+  - id: hostile-amendment-takes-effect-when-its-record-says
+    question: How much can I claim towards home office equipment?
+    section: "6.2"
+    valid_at: 2026-06-01
+    known_at: 2026-06-01T00:00:00Z
+    class: adversarial
+    must_contain: ["800 EUR"]
+    must_not_contain: ["1000 EUR"]
+
+  - id: hostile-amendment-does-apply-once-it-is-in-force
+    question: How much can I claim towards home office equipment?
+    section: "6.2"
+    valid_at: 2026-08-01
+    known_at: 2026-08-01T00:00:00Z
+    class: adversarial
+    must_contain: ["1000 EUR"]
+    must_not_contain: ["800 EUR"]
+
+# Date resolution, measured on its own. These go through the parser rather than
+# past it, because an answer benchmark that phrases its own instants is testing
+# the phrasing. See LESSONS 9.
+resolution_cases:
+  - id: explicit-iso-date
+    question: What was the meal cap on 2026-02-01?
+    expect: stated
+    valid_at: 2026-02-01
+    moves_known_at: false
+
+  - id: written-out-date
+    question: What was the rule on 1 March 2026?
+    expect: stated
+    valid_at: 2026-03-01
+    moves_known_at: false
+
+  - id: month-and-year
+    question: What applied in March 2026?
+    expect: stated
+    valid_at: 2026-03-01
+    moves_known_at: false
+
+  - id: no-date-at-all
+    question: How much parental leave do I get?
+    expect: assumed-today
+    valid_at: 2026-06-01
+    moves_known_at: false
+
+  - id: what-did-you-tell-me
+    question: What did you tell me on 2026-02-01 about the meal cap?
+    expect: stated
+    valid_at: 2026-02-01
+    moves_known_at: true
+
+  - id: a-bare-year-is-a-range
+    question: How much parental leave applied in 2024?
+    expect: ambiguous-date
+
+  - id: a-fact-about-a-person
+    question: What was the stipend when I joined?
+    expect: ambiguous-date
+
+  - id: two-dates-in-one-question
+    question: Was it 75 on 2026-01-01 or 90 on 2026-05-01?
+    expect: ambiguous-date
+
+  - id: vague-gesture-backwards
+    question: What did it say back then?
+    expect: ambiguous-date

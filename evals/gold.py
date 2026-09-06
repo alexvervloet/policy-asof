@@ -17,23 +17,35 @@ from typing import Any, cast
 import yaml
 
 from policy_asof import db, read
+from policy_asof.answer import AnswerOutcome
 from policy_asof.clock import AsOf
 from policy_asof.read import Outcome
 
 GOLD = Path(__file__).resolve().parent / "gold.yaml"
 
 
+# What the system should answer, and what the store must therefore say. An
+# off-topic question is about no clause at all, so it names no section and the
+# store has no opinion to check.
+STORE_EXPECTATION: dict[AnswerOutcome, Outcome] = {
+    AnswerOutcome.ANSWERED: Outcome.IN_FORCE,
+    AnswerOutcome.NO_PASSAGE_ON_TOPIC: Outcome.IN_FORCE,
+    AnswerOutcome.NO_RULE_IN_FORCE: Outcome.NO_RULE_IN_FORCE,
+    AnswerOutcome.NO_RECORD: Outcome.NO_RECORD,
+}
+
+
 @dataclass(frozen=True)
 class Case:
     id: str
     question: str
-    section: str
+    section: str | None
     valid_at: date
     known_at: datetime
     klass: str
     must_contain: tuple[str, ...] = ()
     must_not_contain: tuple[str, ...] = ()
-    expect_outcome: Outcome = Outcome.IN_FORCE
+    expect_outcome: AnswerOutcome = AnswerOutcome.ANSWERED
 
     @property
     def at(self) -> AsOf:
@@ -46,7 +58,7 @@ class Case:
         Those cases are the refusal cases, measured in phase 5 against what the
         system says rather than against what it retrieves.
         """
-        return self.expect_outcome is Outcome.IN_FORCE
+        return self.expect_outcome is AnswerOutcome.ANSWERED
 
 
 def _instant(value: Any) -> datetime:
@@ -63,19 +75,44 @@ def _day(value: Any) -> date:
     raise ValueError(f"valid_at must be a date, got {value!r}")
 
 
+@dataclass(frozen=True)
+class ResolutionCase:
+    """One phrasing, and what the parser should make of it."""
+
+    id: str
+    question: str
+    expect: str
+    valid_at: date | None = None
+    moves_known_at: bool = False
+
+
+def load_resolution(path: Path = GOLD) -> list[ResolutionCase]:
+    parsed = cast("dict[str, Any]", yaml.safe_load(path.read_text()))
+    return [
+        ResolutionCase(
+            id=str(entry["id"]),
+            question=str(entry["question"]),
+            expect=str(entry["expect"]),
+            valid_at=_day(entry["valid_at"]) if entry.get("valid_at") else None,
+            moves_known_at=bool(entry.get("moves_known_at", False)),
+        )
+        for entry in cast("list[dict[str, Any]]", parsed["resolution_cases"])
+    ]
+
+
 def load(path: Path = GOLD) -> tuple[str, list[Case]]:
     parsed = cast("dict[str, Any]", yaml.safe_load(path.read_text()))
     cases = [
         Case(
             id=str(entry["id"]),
             question=str(entry["question"]),
-            section=str(entry["section"]),
+            section=str(entry["section"]) if entry.get("section") else None,
             valid_at=_day(entry["valid_at"]),
             known_at=_instant(entry["known_at"]),
             klass=str(entry["class"]),
             must_contain=tuple(entry.get("must_contain") or ()),
             must_not_contain=tuple(entry.get("must_not_contain") or ()),
-            expect_outcome=Outcome(entry.get("expect_outcome", "in-force")),
+            expect_outcome=AnswerOutcome(entry.get("expect_outcome", "answered")),
         )
         for entry in cast("list[dict[str, Any]]", parsed["cases"])
     ]
@@ -91,11 +128,15 @@ def self_check(conn: db.Conn, cases: list[Case]) -> list[str]:
     """
     problems: list[str] = []
     for case in cases:
+        if case.section is None:
+            # An off-topic question is about no clause, so the store has no
+            # opinion to check. What it should produce is a refusal from the
+            # answer layer, which is measured there rather than here.
+            continue
+        wanted = STORE_EXPECTATION[case.expect_outcome]
         reading = read.as_of(conn, case.section, case.at)
-        if reading.outcome is not case.expect_outcome:
-            problems.append(
-                f"{case.id}: expected {case.expect_outcome}, store says {reading.outcome}"
-            )
+        if reading.outcome is not wanted:
+            problems.append(f"{case.id}: expected {wanted}, store says {reading.outcome}")
             continue
         if reading.text is None:
             continue

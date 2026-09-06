@@ -428,3 +428,161 @@ to remember is not a mechanism. `CASCADE` was the tempting one-word fix and it
 is worse: it would have silently truncated whatever future table happened to
 reference these, which is exactly the class of surprise that fixture exists to
 prevent.
+
+## 12. Five of ten layers could be removed with nothing going red
+
+**Expected.** The ablation matrix was in the plan from day one, written around a
+sibling project's finding: twenty-one trajectory evals, delete the fence around
+untrusted tool output, and nineteen still pass. Knowing the failure mode by name,
+I expected to build the matrix, watch a couple of layers turn out to be
+under-tested, and write the missing evals.
+
+**What happened.** On the first run, **five of the ten breaks turned nothing red
+at all**. Not one outcome case, not one layer eval.
+
+```
+| collapse-two-clocks                     | 0 | 0 | none |
+| default-missing-date-to-today           | 0 | 0 | none |
+| drop-citation-storage                   | 0 | 0 | none |
+| drop-fence-neutralisation               | 0 | 0 | none |
+| post-filter-instead-of-candidate-filter | 0 | 0 | none |
+```
+
+Each one turned out to be a different problem, and only one of them was the
+missing-eval case I had budgeted for:
+
+- **collapse-two-clocks** was masked. The ablation ran against the deliberately
+  mediocre scripted provider to stay fast, and the cases the break would have
+  broken were already failing at baseline, so subtracting the baseline
+  subtracted the finding. Re-run against the real model.
+- **default-missing-date-to-today** could not reach the code it was breaking.
+  The gate held `from policy_asof.resolve import resolve`, a name bound at
+  import, so patching the module changed nothing.
+- **drop-citation-storage** had nothing checking that citations were written.
+  The gate printed a replay count and did not score it.
+- **drop-fence-neutralisation** was defending a path nothing travelled. The
+  hostile document's forged markers were in its *body*, which is prose that
+  never reaches the model. Clause text reaches the model; the corpus had no
+  forged marker there.
+- **post-filter-instead-of-candidate-filter** genuinely produces the same
+  answers at this corpus size. The difference only shows at k=1, where an
+  unfiltered fetch returns a superseded version and the post-filter then throws
+  it away, leaving nothing.
+
+Five fixes later every break turns at least one named layer eval red, and three
+still turn **zero** outcome cases red, which is the result the matrix exists to
+produce.
+
+**Next time.** Knowing a failure mode by name is not the same as noticing it.
+The matrix is worth building precisely because the reasoning that says "these
+layers are all load-bearing" is the reasoning that wrote them, and it is the
+same reasoning that will fail to write the eval. Build it early: every one of
+these five would have been cheaper to fix in the phase that introduced the
+layer.
+
+## 13. The harness reported a crashed run as "nothing noticed"
+
+**Expected.** `scripts/ablate.py` runs the gate under a break, parses the case
+rows out of its output, and subtracts the baseline failures. A break that
+changes nothing produces no new failures.
+
+**What happened.** So does a break that crashes the gate on the first question.
+`collapse-two-clocks` had a real bug in the *break* rather than in the system:
+its replacement query never registered the vector type on the connection, so
+psycopg refused to adapt the parameter and the whole run died. No case rows were
+printed. No case rows parse as no failures. The matrix reported the layer as
+unguarded.
+
+That is the worst available way to be wrong about an ablation. It does not look
+like an error, it looks like a finding, and the finding it looks like is exactly
+the one the tool exists to produce.
+
+**Fix.** A run that exits with an unexpected code, or scores fewer than one
+case, is an error rather than a result, and prints as `**error**` in the matrix
+instead of a zero. The baseline is checked the same way before anything is
+compared against it.
+
+**Next time.** Any harness that measures absence has to be able to tell "nothing
+happened" from "nothing ran". The check is cheap: count what you parsed, and
+refuse to report on a run that produced less than a full set.
+
+## 14. An id derived from a name meant an edited document could not be re-ingested
+
+**Expected.** Document ids are `uuid5(namespace, doc_id)`, so re-ingesting an
+unchanged corpus writes the same rows instead of a second copy under new keys.
+Idempotency by construction.
+
+**What happened.** Editing a corpus file and re-running ingest:
+
+```
+psycopg.errors.UniqueViolation: duplicate key value violates unique constraint
+"documents_pkey"
+```
+
+The content hash had changed, so the "already ingested" check said no, and the
+id had not, so the insert collided. The scheme assumed a document's name
+identifies one immutable text, which is a strange assumption in a project whose
+entire subject is that documents change.
+
+**Fix.** Key the id on the content hash. An edited document is then what it
+actually is: a new publication, with the old row still on record as evidence of
+what was published before, which is the same principle the clause versions
+already follow.
+
+**Next time.** When deriving an identifier, ask what happens when the thing it
+names changes. A name-derived id is a claim that the name will always mean the
+same bytes, and in an append-only store that claim is usually false. The tell
+was available in the design: everything else in this schema keeps the old row.
+
+## 15. The lapse detector fired on a clause that was in force
+
+**Expected.** When a question finds nothing useful in force but finds a close
+passage once valid time is dropped, the handbook covers the topic and simply had
+no rule that day. The lapsed commuting allowance separates by fifteen times from
+every other case in the set, so the threshold is not delicate.
+
+**What happened.** The first run of the gate against a real model refused
+`hostile-amendment-does-apply-once-it-is-in-force`, a question that should have
+been answered.
+
+The hostile amendment's clause text carries a forged fence marker and a line of
+injected instructions, deliberately. That makes it a measurably worse embedding
+match for a question about equipment than the clean text it replaced. So
+dropping valid time found a much closer passage, the gap cleared the threshold,
+and the detector concluded the clause was not in force. It was.
+
+**Fix.** Require the closer passage to be in a **different section**. A closer
+passage in the same section is an earlier wording of a clause that is in force,
+which is the ordinary case rather than a lapse.
+
+**What this means.** The threshold was fine. The rule around it was
+under-specified: "a closer passage exists" and "a closer passage about something
+else exists" are different conditions, and only the second one means anything.
+The 15x separation made the number look settled and hid that the predicate was
+incomplete, which is a good argument for running a threshold against a case it
+was not tuned on before believing it.
+
+## 16. A layer eval that holds a from-import cannot be reached by an ablation
+
+**Expected.** `test_a_missing_date_is_never_silently_today` asserts that the
+resolver refuses what it cannot pin. Break the resolver, watch it go red.
+
+**What happened.** It stayed green. So did the gate's nine resolution cases.
+Both held `from policy_asof.resolve import resolve`, which binds the function
+object at import time, so replacing `resolve.resolve` on the module changed
+nothing either of them called.
+
+Every one of those tests passes, and passed, and would have gone on passing with
+the layer it names deleted from the product.
+
+**Fix.** Call through the module. `resolve_module.resolve(...)` reaches whatever
+the module currently holds, which is what a test asserting the presence of a
+mechanism has to do.
+
+**Next time.** This is a general property of monkeypatch-based ablation and it
+is worth stating once: `from x import y` copies a reference, and anything holding
+that copy is testing the version that existed when it was imported. For ordinary
+tests that is harmless. For a test whose entire job is to notice a layer going
+missing, it is the difference between a gate and a decoration. The matrix is
+what found it, which is the third time in this phase that the tool built to
+check the evals found something wrong with the evals.

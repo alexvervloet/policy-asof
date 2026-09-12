@@ -3,7 +3,7 @@ mypy==2.3.1
 pgvector==0.5.0
 psycopg-pool==3.3.1
 psycopg[binary]==3.3.5
-pyright==1.1.407
+pyright==1.1.411
 pytest==9.1.1
-ruff==0.16.5
+ruff==0.16.6
 types-PyYAML==6.0.12.20260906
